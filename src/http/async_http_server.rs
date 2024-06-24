@@ -25,13 +25,6 @@ pub trait AsyncHttpServerTrt {
     fn start_blocking(&self);
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum ConnState {
-    Read(Vec<u8>, usize),
-    Write(Request, usize),
-    Flush,
-}
-
 impl AsyncHttpServerTrt for AsyncUnixHttpServer {
     fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();

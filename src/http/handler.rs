@@ -1,16 +1,16 @@
-use crate::http::async_http_server::ConnState;
+use crate::http::conn_state::ConnState;
 use crate::http::request::Request;
 use crate::http::response::Response;
 use crate::log_panic;
 use log::debug;
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::io;
-use std::io::{Read, Write};
-use std::io::ErrorKind::WouldBlock;
 use mio::event::Event;
 use mio::net::TcpStream;
 use mio::{Interest, Registry};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::io;
+use std::io::ErrorKind::WouldBlock;
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug)]
 pub struct Handler {
@@ -152,7 +152,7 @@ impl Handler {
         connection: &mut TcpStream,
         event: &Event,
         conn_state: &ConnState,
-        endpoints: &HashMap<String, Handler>
+        endpoints: &HashMap<String, Handler>,
     ) -> Result<ConnState, String> {
         let mut conn_state = conn_state.clone();
         if let ConnState::Read(mut req, mut read) = conn_state {
@@ -167,9 +167,7 @@ impl Handler {
                         req.extend(buf.iter().clone());
                         read += n;
                     }
-                    Err(e) if e.kind() == WouldBlock => {
-                        return Ok(ConnState::Read(req, read))
-                    }
+                    Err(e) if e.kind() == WouldBlock => return Ok(ConnState::Read(req, read)),
                     Err(e) => panic!("{}", e),
                 }
             }
@@ -190,11 +188,11 @@ impl Handler {
 
             match endpoint {
                 None => {
-                    debug!("No handler registered for path: '{path}' and method: {method} not found.");
-                    conn_state = ConnState::Write(
-                        Request::create(path, Handler::not_found(method)),
-                        0,
-                    )
+                    debug!(
+                        "No handler registered for path: '{path}' and method: {method} not found."
+                    );
+                    conn_state =
+                        ConnState::Write(Request::create(path, Handler::not_found(method)), 0)
                 }
                 Some(endpoint) => {
                     conn_state = ConnState::Write(Request::create(path, endpoint.clone()), 0)
@@ -213,11 +211,13 @@ impl Handler {
                 match connection.write(&response.as_bytes()[written..]) {
                     Ok(0) => {
                         debug!("client hung up");
-                        return Ok(ConnState::Flush)
-                    },
+                        return Ok(ConnState::Flush);
+                    }
                     Ok(n) => {
                         written += n;
-                        registry.reregister(connection, event.token(), Interest::READABLE).map_err(|e| e.to_string())?;
+                        registry
+                            .reregister(connection, event.token(), Interest::READABLE)
+                            .map_err(|e| e.to_string())?;
                     }
                     Err(ref err) if err.kind() == WouldBlock => {}
                     // Is this needed?
@@ -228,7 +228,7 @@ impl Handler {
                 }
             }
 
-            return Ok(ConnState::Flush)
+            return Ok(ConnState::Flush);
         }
 
         Ok(conn_state.clone())
