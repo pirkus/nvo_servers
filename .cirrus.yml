@@ -1,5 +1,5 @@
 freebsd_instance:
-  image-family: freebsd-14-0
+  image_family: freebsd-14-0
 
 task:
   name: cargo test (stable)
