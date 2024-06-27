@@ -6,7 +6,7 @@ task:
   env:
     HOME: /tmp # cargo needs it
   install_script: pkg install -y rust
-  generate_lockfile: cargo generate-lockfile
+  lockfile_script: cargo generate-lockfile
   cargo_version: cargo version
   cargo_cache:
     folder: $HOME/.cargo/registry
