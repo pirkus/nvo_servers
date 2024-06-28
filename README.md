@@ -2,9 +2,10 @@
 Not very opinionated servers 
 
 ## Build
-|Branch|Status                                                                                                                                                                              |
-|------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|main  |[![CircleCI](https://dl.circleci.com/status-badge/img/gh/pirkus/nvo_servers/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/pirkus/nvo_servers/tree/main)|
+|Branch|Status                                                                                                                                                                                       |
+|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|main(linux)  |[![CircleCI](https://dl.circleci.com/status-badge/img/gh/pirkus/nvo_servers/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/pirkus/nvo_servers/tree/main)  |
+|main(freebsd)|[![Build Status](https://api.cirrus-ci.com/github/pirkus/nvo_servers.svg)](https://cirrus-ci.com/github/pirkus/nvo_servers)                                                           |
 
 ## Examples
 Are also available in ./examples directory
