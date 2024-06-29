@@ -10,7 +10,7 @@ use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
-use super::request::Request;
+use super::conn_state::ConnState;
 
 pub struct AsyncUnixHttpServer {
     listen_addr: String,
