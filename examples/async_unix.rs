@@ -1,10 +1,10 @@
 fn main() {
     #[cfg(target_os = "linux")]
-    UnixExample::main()
+    unix_example::main()
 }
 
 #[cfg(target_os = "linux")]
-mod UnixExample {
+mod unix_example {
     use env_logger::Env;
     use nvo_servers::http::async_http_server::{AsyncHttpServerTrt, AsyncUnixHttpServer};
     use nvo_servers::http::handler::Handler;
