@@ -1,11 +1,14 @@
+#[cfg(target_os = "linux")]
 mod common;
 
-use nvo_servers::http::async_http_server::{AsyncUnixHttpServer, AsyncHttpServerTrt};
+#[cfg(target_os = "linux")]
+use nvo_servers::http::async_http_server::{AsyncHttpServerTrt, AsyncUnixHttpServer};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::thread;
 
 #[test]
+#[cfg(target_os = "linux")]
 fn get_works() {
     env_logger::init();
     let port = 8090;
@@ -18,7 +21,7 @@ fn get_works() {
         .unwrap()
         .into_string()
         .unwrap();
-
+    
     let resp: Value = serde_json::from_str(body.as_str()).unwrap();
     assert_eq!(resp["status"], "ok");
 }

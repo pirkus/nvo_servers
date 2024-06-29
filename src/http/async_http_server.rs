@@ -10,7 +10,7 @@ use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
-use super::request::Request;
+use super::conn_state::ConnState;
 
 pub struct AsyncUnixHttpServer {
     listen_addr: String,
@@ -23,13 +23,6 @@ pub trait AsyncHttpServerTrt {
     fn create_addr(addr: String, endpoints: HashSet<Handler>) -> AsyncUnixHttpServer;
     fn create_port(port: u32, endpoints: HashSet<Handler>) -> AsyncUnixHttpServer;
     fn start_blocking(&self);
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub enum ConnState {
-    Read(Vec<u8>, usize),
-    Write(Request, usize),
-    Flush,
 }
 
 impl AsyncHttpServerTrt for AsyncUnixHttpServer {

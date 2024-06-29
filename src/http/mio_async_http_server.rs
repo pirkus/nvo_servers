@@ -1,16 +1,16 @@
-use ErrorKind::Interrupted;
-use io::ErrorKind;
-use std::collections::{HashMap, HashSet};
-use std::{io, thread};
-use std::io::ErrorKind::WouldBlock;
-use std::sync::{Arc, Mutex};
-use log::{debug, info};
-use mio::{Events, Interest, Poll, Token};
-use mio::net::{TcpListener, TcpStream};
 use crate::futures::workers::Workers;
-use crate::http::async_http_server::ConnState;
+use crate::http::conn_state::ConnState;
 use crate::http::handler::Handler;
 use crate::log_panic;
+use io::ErrorKind;
+use log::{debug, info};
+use mio::net::{TcpListener, TcpStream};
+use mio::{Events, Interest, Poll, Token};
+use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind::WouldBlock;
+use std::sync::{Arc, Mutex};
+use std::{io, thread};
+use ErrorKind::Interrupted;
 
 const NEW_CONN_TOKEN: Token = Token(0);
 
@@ -47,7 +47,9 @@ impl MioAsyncHttpServer {
         let addr = self.listen_addr.parse().unwrap();
         let mut listener = TcpListener::bind(addr).unwrap();
 
-        poll.registry().register(&mut listener, NEW_CONN_TOKEN, Interest::READABLE).unwrap();
+        poll.registry()
+            .register(&mut listener, NEW_CONN_TOKEN, Interest::READABLE)
+            .unwrap();
 
         // Unique token for each incoming connection.
         let mut unique_token = Token(NEW_CONN_TOKEN.0 + 1);
@@ -74,29 +76,50 @@ impl MioAsyncHttpServer {
                         };
 
                         unique_token = Token(unique_token.0 + 1);
-                        poll.registry().register(
-                            &mut connection,
-                            unique_token,
-                            Interest::READABLE.add(Interest::WRITABLE),
-                        ).unwrap();
+                        poll.registry()
+                            .register(
+                                &mut connection,
+                                unique_token,
+                                Interest::READABLE.add(Interest::WRITABLE),
+                            )
+                            .unwrap();
 
                         let state = ConnState::Read(Vec::new(), 0);
-                        self.connections.lock().expect("poisoned").insert(unique_token, (connection, state));
+                        self.connections
+                            .lock()
+                            .expect("poisoned")
+                            .insert(unique_token, (connection, state));
                     },
                     conn_token => {
-                        let conn_and_conn_state = self.connections.lock().expect("poisoned").remove(&conn_token);
+                        let conn_and_conn_state = self
+                            .connections
+                            .lock()
+                            .expect("poisoned")
+                            .remove(&conn_token);
 
                         // self._workers.queue(async move {
-                            if let Some((mut connection, conn_state)) = conn_and_conn_state {
-                                let result = Handler::handle_async_mio(poll.registry(), &mut connection, event, &conn_state, &self.endpoints);
-                                if let Ok(ConnState::Flush) = result {
-                                    debug!("De-registering events for connection token: {:?}", conn_token.0);
-                                    poll.registry().deregister(&mut connection).unwrap();
-                                } else {
-                                    debug!("Re-queueing connection with token: {:?}. Connection state: {:?}", conn_token.0, conn_state.clone());
-                                    self.connections.lock().expect("poisoned").insert(conn_token, (connection, result.unwrap()));
-                                }
+                        if let Some((mut connection, conn_state)) = conn_and_conn_state {
+                            let result = Handler::handle_async_mio(
+                                poll.registry(),
+                                &mut connection,
+                                event,
+                                &conn_state,
+                                &self.endpoints,
+                            );
+                            if let Ok(ConnState::Flush) = result {
+                                debug!(
+                                    "De-registering events for connection token: {:?}",
+                                    conn_token.0
+                                );
+                                poll.registry().deregister(&mut connection).unwrap();
+                            } else {
+                                debug!("Re-queueing connection with token: {:?}. Connection state: {:?}", conn_token.0, conn_state.clone());
+                                self.connections
+                                    .lock()
+                                    .expect("poisoned")
+                                    .insert(conn_token, (connection, result.unwrap()));
                             }
+                        }
                         // }).unwrap();
                     }
                 }
