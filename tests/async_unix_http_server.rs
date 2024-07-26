@@ -4,14 +4,12 @@ mod common;
 #[test]
 #[cfg(target_os = "linux")]
 fn get_works() {
-    use log::error;
     use nvo_servers::http::async_http_server::{AsyncHttpServerTrt, AsyncUnixHttpServer};
     use serde_json::Value;
     use std::collections::HashSet;
     use std::thread;
 
     env_logger::init();
-    error!("kok");
     let port = 8090;
     let endpoints = HashSet::from([common::get_status_handler()]);
     let server = AsyncUnixHttpServer::create_port(port, endpoints);
