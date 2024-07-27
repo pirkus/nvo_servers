@@ -108,16 +108,15 @@ impl AsyncHttpServerTrt for AsyncUnixHttpServer {
                 if fd == listener.as_raw_fd() {
                     match listener.accept() {
                         Ok((connection, _)) => {
-                            connection.set_nonblocking(true).unwrap_or_else(|e| {
-                                log_panic!("Failed to set connection to nonblocking mode, reason:\n{reason}", reason = e.to_string())
-                            });
+                            connection
+                                .set_nonblocking(true)
+                                .expect("Failed to set connection to nonblocking mode.");
 
                             let fd = connection.as_raw_fd();
 
                             let event = Event::new(Events::EPOLLIN | Events::EPOLLOUT, fd as _);
-                            epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event).unwrap_or_else(|e| {
-                                log_panic!("Failed to register interest in connection events, reason:\n{reason}", reason = e.to_string())
-                            });
+                            epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event)
+                                .expect("Failed to register interest in connection events.");
 
                             let state = ConnState::Read(Vec::new(), 0);
 
@@ -126,7 +125,7 @@ impl AsyncHttpServerTrt for AsyncUnixHttpServer {
                                 .expect("locking problem")
                                 .insert(fd, (connection, state));
                         }
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                         // do we wanna die here?
                         Err(e) => panic!("failed to accept: {}", e),
                     }
