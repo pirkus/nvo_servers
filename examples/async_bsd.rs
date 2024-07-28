@@ -18,7 +18,7 @@ mod bsd_example {
             Ok(Response::create(200, json!({"status": "ok"}).to_string()))
         });
 
-        env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+        env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
         AsyncBsdHttpServer::create_port(8090, HashSet::from([status_endpoint])).start_blocking()
     }
