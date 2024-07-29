@@ -138,11 +138,11 @@ impl AsyncHttpServerTrt for AsyncUnixHttpServer {
                     if let Some((conn, conn_status)) = option {
                         self.workers
                             .queue(async move {
-                                if let Some(new_state) = Handler::handle_async(
-                                    endpoints,
+                                if let Some((conn, new_state)) = Handler::handle_async_better(
+                                    conn,
                                     &conn_status,
-                                    conn.try_clone().unwrap(),
-                                ) {
+                                    &endpoints,
+                                ).await {
                                     if new_state != ConnState::Flush {
                                         conns
                                             .lock()
