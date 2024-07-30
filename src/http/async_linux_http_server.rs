@@ -5,11 +5,12 @@ use epoll::ControlOptions::EPOLL_CTL_ADD;
 use epoll::{Event, Events};
 use log::{error, info};
 use std::collections::{HashMap, HashSet};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
+use super::async_http_server::AsyncHttpServer;
 use super::conn_state::ConnState;
 
 impl AsyncHttpServer {
