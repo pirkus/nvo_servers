@@ -3,7 +3,7 @@ mod common;
 #[test]
 #[cfg(target_os = "freebsd")]
 fn get_works() {
-    use nvo_servers::http::async_bsd_http_server::AsyncBsdHttpServer;
+    use nvo_servers::http::async_http_server::AsyncHttpServer;
 
     use env_logger::Env;
     use serde_json::Value;
@@ -14,7 +14,7 @@ fn get_works() {
 
     let port = 8090;
     let endpoints = HashSet::from([common::get_status_handler()]);
-    let server = AsyncBsdHttpServer::create_port(port, endpoints);
+    let server = AsyncHttpServer::create_port(port, endpoints);
     let _server_thread = thread::spawn(move || server.start_blocking());
     let body: String = ureq::get(format!("http://localhost:{port}/status").as_str())
         .set("Example-Header", "header value")

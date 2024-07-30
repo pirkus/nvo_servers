@@ -4,28 +4,21 @@ use kqueue_sys::EventFlag;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
-use std::net::TcpStream;
 use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
+use super::async_http_server::AsyncHttpServer;
 use super::conn_state::ConnState;
 
-pub struct AsyncBsdHttpServer {
-    listen_addr: String,
-    endpoints: HashMap<String, Handler>,
-    workers: Workers,
-    connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
-}
-
-impl AsyncBsdHttpServer {
-    pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncBsdHttpServer {
+impl AsyncHttpServer {
+    pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let thread_count = thread::available_parallelism().unwrap().get();
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let workers = Workers::new(thread_count);
 
-        AsyncBsdHttpServer {
+        AsyncHttpServer {
             listen_addr,
             endpoints,
             workers,
@@ -33,7 +26,7 @@ impl AsyncBsdHttpServer {
         }
     }
 
-    pub fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncBsdHttpServer {
+    pub fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncHttpServer {
         if port > 65535 {
             panic!("Port cannot be higher than 65535, was: {port}")
         }
@@ -44,7 +37,7 @@ impl AsyncBsdHttpServer {
         let workers = Workers::new(thread_count);
 
         info!("Starting non-blocking IO HTTP server on: {listen_addr}");
-        AsyncBsdHttpServer {
+        AsyncHttpServer {
             listen_addr,
             endpoints,
             workers,
