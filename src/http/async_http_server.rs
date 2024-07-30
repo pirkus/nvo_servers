@@ -12,21 +12,21 @@ use std::{io, thread};
 
 use super::conn_state::ConnState;
 
-pub struct AsyncUnixHttpServer {
+pub struct AsyncHttpServer {
     listen_addr: String,
     endpoints: HashMap<String, Handler>,
     workers: Workers,
     connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
 }
 
-impl AsyncUnixHttpServer {
-    pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
+impl AsyncHttpServer {
+    pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let thread_count = thread::available_parallelism().unwrap().get();
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let workers = Workers::new(thread_count);
 
-        AsyncUnixHttpServer {
+        AsyncHttpServer {
             listen_addr,
             endpoints,
             workers,
@@ -34,9 +34,9 @@ impl AsyncUnixHttpServer {
         }
     }
 
-    pub fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
+    pub fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncHttpServer {
         if port > 65535 {
-            log_panic!("Port cannot be higher than 65535, was: {port}")
+            panic!("Port cannot be higher than 65535, was: {port}")
         }
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let listen_addr = format!("0.0.0.0:{port}");
@@ -45,7 +45,7 @@ impl AsyncUnixHttpServer {
         let workers = Workers::new(thread_count);
 
         info!("Starting non-blocking IO HTTP server on: {listen_addr}");
-        AsyncUnixHttpServer {
+        AsyncHttpServer {
             listen_addr,
             endpoints,
             workers,
@@ -81,7 +81,7 @@ impl AsyncUnixHttpServer {
             listener.as_raw_fd() as _,
         );
         epoll::ctl(epoll, EPOLL_CTL_ADD, listener.as_raw_fd(), event).unwrap_or_else(|e| {
-            log_panic!(
+            panic!(
                 "Failed to register interested in epoll fd, reason:\n{reason}",
                 reason = e.to_string()
             )

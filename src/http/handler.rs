@@ -1,7 +1,6 @@
 use crate::http::conn_state::ConnState;
 use crate::http::request::Request;
 use crate::http::response::Response;
-use crate::log_panic;
 use log::{debug, error};
 use mio::event::Event;
 use mio::net::TcpStream;
@@ -43,7 +42,7 @@ impl Handler {
 
         stream
             .write_all(response.as_bytes())
-            .unwrap_or_else(|e| log_panic!("Cannot write to output stream! Error: {e}"));
+            .expect("Cannot write to output stream!");
 
         Ok(status_code)
     }
