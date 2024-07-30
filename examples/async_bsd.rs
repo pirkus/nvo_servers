@@ -7,7 +7,6 @@ fn main() {
 mod bsd_example {
     use env_logger::Env;
     use nvo_servers::http::async_bsd_http_server::AsyncBsdHttpServer;
-    use nvo_servers::http::async_bsd_http_server::AsyncHttpServerTrt;
     use nvo_servers::http::handler::Handler;
     use nvo_servers::http::response::Response;
     use serde_json::json;

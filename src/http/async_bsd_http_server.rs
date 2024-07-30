@@ -18,14 +18,8 @@ pub struct AsyncBsdHttpServer {
     connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
 }
 
-pub trait AsyncHttpServerTrt {
-    fn create_addr(addr: String, endpoints: HashSet<Handler>) -> AsyncBsdHttpServer;
-    fn create_port(port: u32, endpoints: HashSet<Handler>) -> AsyncBsdHttpServer;
-    fn start_blocking(&self);
-}
-
-impl AsyncHttpServerTrt for AsyncBsdHttpServer {
-    fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncBsdHttpServer {
+impl AsyncBsdHttpServer {
+    pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncBsdHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let thread_count = thread::available_parallelism().unwrap().get();
         let connections = Arc::new(Mutex::new(HashMap::new()));
@@ -39,7 +33,7 @@ impl AsyncHttpServerTrt for AsyncBsdHttpServer {
         }
     }
 
-    fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncBsdHttpServer {
+    pub fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncBsdHttpServer {
         if port > 65535 {
             panic!("Port cannot be higher than 65535, was: {port}")
         }
@@ -58,7 +52,7 @@ impl AsyncHttpServerTrt for AsyncBsdHttpServer {
         }
     }
 
-    fn start_blocking(&self) {
+    pub fn start_blocking(&self) {
         let listener = TcpListener::bind(&self.listen_addr).unwrap();
         listener.set_nonblocking(true).unwrap();
 
