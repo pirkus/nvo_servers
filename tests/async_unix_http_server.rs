@@ -4,7 +4,7 @@ mod common;
 #[test]
 #[cfg(target_os = "linux")]
 fn get_works() {
-    use nvo_servers::http::async_http_server::{AsyncHttpServerTrt, AsyncUnixHttpServer};
+    use nvo_servers::http::async_http_server::AsyncUnixHttpServer;
     use serde_json::Value;
     use std::collections::HashSet;
     use std::thread;

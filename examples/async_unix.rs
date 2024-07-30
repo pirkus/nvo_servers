@@ -6,7 +6,7 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod unix_example {
     use env_logger::Env;
-    use nvo_servers::http::async_http_server::{AsyncHttpServerTrt, AsyncUnixHttpServer};
+    use nvo_servers::http::async_http_server::AsyncUnixHttpServer;
     use nvo_servers::http::handler::Handler;
     use nvo_servers::http::response::Response;
     use serde_json::json;

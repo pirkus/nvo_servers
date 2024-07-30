@@ -19,14 +19,8 @@ pub struct AsyncUnixHttpServer {
     connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
 }
 
-pub trait AsyncHttpServerTrt {
-    fn create_addr(addr: String, endpoints: HashSet<Handler>) -> AsyncUnixHttpServer;
-    fn create_port(port: u32, endpoints: HashSet<Handler>) -> AsyncUnixHttpServer;
-    fn start_blocking(&self);
-}
-
-impl AsyncHttpServerTrt for AsyncUnixHttpServer {
-    fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
+impl AsyncUnixHttpServer {
+    pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let thread_count = thread::available_parallelism().unwrap().get();
         let connections = Arc::new(Mutex::new(HashMap::new()));
@@ -40,7 +34,7 @@ impl AsyncHttpServerTrt for AsyncUnixHttpServer {
         }
     }
 
-    fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
+    pub fn create_port(port: u32, handlers: HashSet<Handler>) -> AsyncUnixHttpServer {
         if port > 65535 {
             log_panic!("Port cannot be higher than 65535, was: {port}")
         }
@@ -59,7 +53,7 @@ impl AsyncHttpServerTrt for AsyncUnixHttpServer {
         }
     }
 
-    fn start_blocking(&self) {
+    pub fn start_blocking(&self) {
         let listener = TcpListener::bind(&self.listen_addr).unwrap_or_else(|e| {
             log_panic!(
                 "Could not start listening on {addr}, reason:\n{reason}",
@@ -138,11 +132,10 @@ impl AsyncHttpServerTrt for AsyncUnixHttpServer {
                     if let Some((conn, conn_status)) = option {
                         self.workers
                             .queue(async move {
-                                if let Some((conn, new_state)) = Handler::handle_async_better(
-                                    conn,
-                                    &conn_status,
-                                    &endpoints,
-                                ).await {
+                                if let Some((conn, new_state)) =
+                                    Handler::handle_async_better(conn, &conn_status, &endpoints)
+                                        .await
+                                {
                                     if new_state != ConnState::Flush {
                                         conns
                                             .lock()
