@@ -1,7 +1,6 @@
 use crate::futures::workers::Workers;
 use crate::http::conn_state::ConnState;
 use crate::http::handler::Handler;
-use crate::log_panic;
 use io::ErrorKind;
 use log::{debug, info};
 use mio::net::{TcpListener, TcpStream};
@@ -24,7 +23,7 @@ pub struct MioAsyncHttpServer {
 impl MioAsyncHttpServer {
     pub fn create_port(port: u32, handlers: HashSet<Handler>) -> MioAsyncHttpServer {
         if port > 65535 {
-            log_panic!("Port cannot be higher than 65535, was: {port}")
+            panic!("Port cannot be higher than 65535, was: {port}")
         }
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let listen_addr = format!("0.0.0.0:{port}");

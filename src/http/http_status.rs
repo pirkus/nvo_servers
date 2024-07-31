@@ -1,4 +1,4 @@
-use crate::log_panic;
+use log::error;
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/505
 pub struct HttpStatus;
@@ -20,7 +20,9 @@ impl HttpStatus {
             503 => "Service Unavailable".to_string(),
             505 => "HTTP Version Not Supported".to_string(),
             _ => {
-                log_panic!("Status code: {code}, not found, please define it!")
+                let err_msg = format!("Status code: {code}, not found, please define it!");
+                error!("{}", err_msg);
+                err_msg
             }
         }
     }

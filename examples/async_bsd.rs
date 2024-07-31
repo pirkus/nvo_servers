@@ -1,10 +1,10 @@
 fn main() {
-    #[cfg(target_os = "linux")]
-    unix_example::main()
+    #[cfg(target_os = "freebsd")]
+    bsd_example::main()
 }
 
-#[cfg(target_os = "linux")]
-mod unix_example {
+#[cfg(target_os = "freebsd")]
+mod bsd_example {
     use env_logger::Env;
     use nvo_servers::http::async_http_server::AsyncHttpServer;
     use nvo_servers::http::handler::Handler;

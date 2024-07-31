@@ -1,15 +1,17 @@
-#[cfg(target_os = "linux")]
 mod common;
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "freebsd")]
 fn get_works() {
     use nvo_servers::http::async_http_server::AsyncHttpServer;
+
+    use env_logger::Env;
     use serde_json::Value;
     use std::collections::HashSet;
     use std::thread;
 
-    env_logger::init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+
     let port = 8090;
     let endpoints = HashSet::from([common::get_status_handler()]);
     let server = AsyncHttpServer::create_port(port, endpoints);

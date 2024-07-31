@@ -1,8 +1,7 @@
 use crate::http::conn_state::ConnState;
 use crate::http::request::Request;
 use crate::http::response::Response;
-use crate::log_panic;
-use log::debug;
+use log::{debug, error};
 use mio::event::Event;
 use mio::net::TcpStream;
 use mio::{Interest, Registry};
@@ -43,36 +42,36 @@ impl Handler {
 
         stream
             .write_all(response.as_bytes())
-            .unwrap_or_else(|e| log_panic!("Cannot write to output stream! Error: {e}"));
+            .expect("Cannot write to output stream!");
 
         Ok(status_code)
     }
 
-    pub fn handle_async<S>(
-        endpoints: HashMap<String, Handler>,
-        conn_state: &ConnState,
+    pub async fn handle_async_better<S>(
         mut connection: S,
-    ) -> Option<ConnState>
+        conn_state: &ConnState,
+        endpoints: &HashMap<String, Handler>,
+    ) -> Option<(S, ConnState)>
     where
-        S: Write + Read,
+        S: Read + Write,
     {
         match conn_state {
-            ConnState::Read(req, read) => {
+            ConnState::Read(req, read_bytes) => {
                 let mut req = req.clone();
-                let mut read = *read;
+                let mut read = *read_bytes;
                 while read < 4 || &req[read - 4..read] != b"\r\n\r\n" {
                     let mut buf = [0u8; 1024];
                     match connection.read(&mut buf) {
                         Ok(0) => {
                             debug!("client disconnected unexpectedly");
-                            return Some(ConnState::Flush);
+                            return Some((connection, ConnState::Flush));
                         }
                         Ok(n) => {
                             req.extend(buf.iter().clone());
-                            read += n
+                            read += n;
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            return Some(ConnState::Read(req, read))
+                            return Some((connection, ConnState::Read(req, read)))
                         }
                         Err(e) => panic!("{}", e),
                     }
@@ -92,57 +91,51 @@ impl Handler {
 
                 debug!("Request payload: {:?}", request);
 
-                match endpoint {
+                let req_handler = match endpoint {
                     None => {
-                        debug!("No handler registered for path: '{path}' and method: {method} not found.");
-                        Some(ConnState::Write(
-                            Request::create(path, Self::not_found(method)),
-                            0,
-                        ))
+                        debug!(
+                        "No handler registered for path: '{path}' and method: {method} not found."
+                    );
+                        Request::create(path, Handler::not_found(method))
                     }
-                    Some(endpoint) => {
-                        Some(ConnState::Write(Request::create(path, endpoint.clone()), 0))
-                    }
-                }
+                    Some(endpoint) => Request::create(path, endpoint.clone()),
+                };
+                Some((connection, ConnState::Write(req_handler, 0)))
             }
-            ConnState::Write(request, old_written) => {
-                let res = (request.endpoint.handler_func)(request).unwrap_or_else(|e| {
-                    log_panic!(
-                        "Failed process req, reason:\n{reason}",
-                        reason = e.to_string()
-                    )
-                }); // TODO[FL]: return 500 Internal somehow
-                    //let status_code = res.get_status_code();
+            ConnState::Write(req, written_bytes) => {
+                let res = (req.endpoint.handler_func)(req).unwrap(); // TODO: catch panics
                 let status_line = res.get_status_line();
                 let contents = res.get_body();
                 let length = contents.len();
-
                 let response =
                     format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
                 let response_len = response.len();
-                let mut written = *old_written;
+                let mut written = *written_bytes;
                 while written != response_len {
+                    debug!("writting...");
                     match connection.write(&response.as_bytes()[written..]) {
                         Ok(0) => {
                             debug!("client hung up");
-                            return Some(ConnState::Flush);
+                            return Some((connection, ConnState::Flush));
                         }
                         Ok(n) => written += n,
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            return Some(ConnState::Write(request.clone(), written))
+                        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                            return Some((connection, ConnState::Write(req.clone(), written)))
                         }
-                        Err(e) => panic!("{}", e), // I guess we don't wanna die here ?
+                        // Is this needed?
+                        // Err(ref err) if err.kind() == Interrupted => {
+                        //     return handle_connection_event(registry, connection, event, conn_state)
+                        // }
+                        Err(err) => panic!("{}", err), // I guess we don't wanna die here ?
                     }
                 }
-
-                Some(ConnState::Flush)
+                Some((connection, ConnState::Flush))
             }
             ConnState::Flush => {
-                match connection.flush() {
-                    Ok(_) => None,
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => Some(ConnState::Flush),
-                    Err(e) => panic!("{}", e), // I guess we don't wanna die here ?
-                }
+                if let Err(msg) = connection.flush() {
+                    error!("Could not flush connection. Err kind: {}", msg.kind())
+                };
+                Some((connection, ConnState::Flush))
             }
         }
     }
