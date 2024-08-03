@@ -1,8 +1,8 @@
 use crate::http::http_status::HttpStatus;
 
 pub struct Response {
-    status_code: u16,
-    response_body: String,
+    pub status_code: u16,
+    pub response_body: String,
 }
 
 impl Response {
@@ -19,12 +19,5 @@ impl Response {
             "HTTP/1.1 {status_code} {status_msg}",
             status_code = self.status_code
         )
-    }
-
-    pub fn get_body(&self) -> &str {
-        &self.response_body
-    }
-    pub fn get_status_code(&self) -> u16 {
-        self.status_code
     }
 }

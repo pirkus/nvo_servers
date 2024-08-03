@@ -1,16 +1,17 @@
 use std::{
     collections::HashMap,
     net::TcpStream,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc, Mutex},
 };
 
 use crate::futures::workers::Workers;
 
-use super::{conn_state::ConnState, handler::Handler};
+use super::{handler::Handler, ConnState};
 
 pub struct AsyncHttpServer {
     pub listen_addr: String,
     pub endpoints: HashMap<String, Handler>,
     pub workers: Workers,
     pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
+    pub started: AtomicBool,
 }
