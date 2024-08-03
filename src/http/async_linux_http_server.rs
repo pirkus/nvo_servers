@@ -25,6 +25,7 @@ impl AsyncHttpServer {
             endpoints,
             workers,
             connections,
+            started: AtomicBool::new(false),
         }
     }
 
@@ -44,6 +45,7 @@ impl AsyncHttpServer {
             endpoints,
             workers,
             connections,
+            started: AtomicBool::new(false),
         }
     }
 
