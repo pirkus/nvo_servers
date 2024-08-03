@@ -6,7 +6,7 @@ use std::{
 
 use crate::futures::workers::Workers;
 
-use super::{conn_state::ConnState, handler::Handler};
+use super::{handler::Handler, ConnState};
 
 pub struct AsyncHttpServer {
     pub listen_addr: String,

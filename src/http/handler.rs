@@ -1,6 +1,6 @@
-use crate::http::conn_state::ConnState;
-use crate::http::request::Request;
 use crate::http::response::Response;
+use crate::http::ConnState;
+use crate::http::Request;
 use log::{debug, error};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -29,9 +29,9 @@ impl Handler {
     {
         let request = Request::create(path.as_str(), Self::not_found("fix_me"));
         let res = (self.handler_func)(&request).unwrap(); // TODO[FL]: return 500 Internal somehow
-        let status_code = res.get_status_code();
+        let status_code = res.status_code;
         let status_line = res.get_status_line();
-        let contents = res.get_body();
+        let contents = res.response_body;
         let length = contents.len();
 
         let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
@@ -101,7 +101,7 @@ impl Handler {
             ConnState::Write(req, written_bytes) => {
                 let res = (req.endpoint.handler_func)(req).unwrap(); // TODO: catch panics
                 let status_line = res.get_status_line();
-                let contents = res.get_body();
+                let contents = res.response_body;
                 let length = contents.len();
                 let response =
                     format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");

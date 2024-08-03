@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
 use super::async_http_server::AsyncHttpServer;
-use super::conn_state::ConnState;
+use super::ConnState;
 
 impl AsyncHttpServer {
     pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncHttpServer {
@@ -74,12 +74,8 @@ impl AsyncHttpServer {
             Events::EPOLLIN | Events::EPOLLOUT,
             listener.as_raw_fd() as _,
         );
-        epoll::ctl(epoll, EPOLL_CTL_ADD, listener.as_raw_fd(), event).unwrap_or_else(|e| {
-            panic!(
-                "Failed to register interested in epoll fd, reason:\n{reason}",
-                reason = e.to_string()
-            )
-        });
+        epoll::ctl(epoll, EPOLL_CTL_ADD, listener.as_raw_fd(), event)
+            .unwrap_or_else(|e| panic!("Failed to register interested in epoll fd, reason:\n{e}"));
 
         // To add multithreading: spawn a new thread around here
         // events arr cannot be shared between threads, would be hard in rust anyway :D
