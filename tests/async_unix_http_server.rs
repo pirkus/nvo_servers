@@ -17,7 +17,7 @@ fn get_works() {
     let endpoints = HashSet::from([common::get_status_handler()]);
     let server = Arc::new(AsyncHttpServer::create_port(port, endpoints));
     let server_clj = server.clone();
-    let _server_thread = thread::spawn(move || server.start_blocking());
+    let _server_thread = thread::spawn(move || server_clj.start_blocking());
 
     common::wait_for_server_to_start(server);
 

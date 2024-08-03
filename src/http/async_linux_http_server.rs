@@ -7,6 +7,7 @@ use log::{error, info};
 use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
@@ -17,14 +18,11 @@ impl AsyncHttpServer {
     pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let thread_count = thread::available_parallelism().unwrap().get();
-        let connections = Arc::new(Mutex::new(HashMap::new()));
-        let workers = Workers::new(thread_count);
-
         AsyncHttpServer {
             listen_addr,
             endpoints,
-            workers,
-            connections,
+            workers: Workers::new(thread_count),
+            connections: Arc::new(Mutex::new(HashMap::new())),
             started: AtomicBool::new(false),
         }
     }
@@ -36,15 +34,12 @@ impl AsyncHttpServer {
         let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let listen_addr = format!("0.0.0.0:{port}");
         let thread_count = thread::available_parallelism().unwrap().get();
-        let connections = Arc::new(Mutex::new(HashMap::new()));
-        let workers = Workers::new(thread_count);
-
         info!("Starting non-blocking IO HTTP server on: {listen_addr}");
         AsyncHttpServer {
             listen_addr,
             endpoints,
-            workers,
-            connections,
+            workers: Workers::new(thread_count),
+            connections: Arc::new(Mutex::new(HashMap::new())),
             started: AtomicBool::new(false),
         }
     }
@@ -82,6 +77,9 @@ impl AsyncHttpServer {
         // To add multithreading: spawn a new thread around here
         // events arr cannot be shared between threads, would be hard in rust anyway :D
         loop {
+            self.started
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+
             let mut events = [Event::new(Events::empty(), 0); 1024];
             let num_events = epoll::wait(epoll, -1 /* block forever */, &mut events)
                 .unwrap_or_else(|e| {
