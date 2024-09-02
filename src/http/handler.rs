@@ -2,7 +2,7 @@ use crate::http::response::Response;
 use crate::http::ConnState;
 use crate::http::Request;
 use log::{debug, error};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::io::{Read, Write};
@@ -46,7 +46,7 @@ impl Handler {
     pub async fn handle_async_better<S>(
         mut connection: S,
         conn_state: &ConnState,
-        endpoints: &HashMap<String, Handler>,
+        endpoints: &HashSet<Handler>,
     ) -> Option<(S, ConnState)>
     where
         S: Read + Write,
@@ -82,8 +82,9 @@ impl Handler {
                 let _protocol = first_line[2];
                 let _headers = &request[1..];
 
-                let endpoint_key = Handler::gen_key_from_str(path, method);
-                let endpoint = endpoints.get(&endpoint_key);
+                let endpoint = endpoints
+                    .iter()
+                    .find(|x| x.method == method && x.path == path);
 
                 debug!("Request payload: {:?}", request);
 

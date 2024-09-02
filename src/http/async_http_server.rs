@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::TcpStream,
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
@@ -10,7 +10,7 @@ use super::{handler::Handler, ConnState};
 
 pub struct AsyncHttpServer {
     pub listen_addr: String,
-    pub endpoints: HashMap<String, Handler>,
+    pub endpoints: HashSet<Handler>,
     pub workers: Workers,
     pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
     pub started: AtomicBool,

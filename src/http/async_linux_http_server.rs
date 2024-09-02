@@ -16,11 +16,10 @@ use super::ConnState;
 
 impl AsyncHttpServer {
     pub fn create_addr(listen_addr: String, handlers: HashSet<Handler>) -> AsyncHttpServer {
-        let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let thread_count = thread::available_parallelism().unwrap().get();
         AsyncHttpServer {
             listen_addr,
-            endpoints,
+            endpoints: handlers.clone(),
             workers: Workers::new(thread_count),
             connections: Arc::new(Mutex::new(HashMap::new())),
             started: AtomicBool::new(false),
@@ -31,13 +30,12 @@ impl AsyncHttpServer {
         if port > 65535 {
             panic!("Port cannot be higher than 65535, was: {port}")
         }
-        let endpoints = handlers.into_iter().map(|x| (x.gen_key(), x)).collect();
         let listen_addr = format!("0.0.0.0:{port}");
         let thread_count = thread::available_parallelism().unwrap().get();
         info!("Starting non-blocking IO HTTP server on: {listen_addr}");
         AsyncHttpServer {
             listen_addr,
-            endpoints,
+            endpoints: handlers.clone(),
             workers: Workers::new(thread_count),
             connections: Arc::new(Mutex::new(HashMap::new())),
             started: AtomicBool::new(false),
