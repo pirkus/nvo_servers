@@ -84,15 +84,13 @@ impl Handler {
 
                 let endpoint = endpoints
                     .iter()
-                    .find(|x| x.method == method && x.path == path);
+                    .find(|x| x.method == method && path_matches_pattern(&x.path, path));
 
                 debug!("Request payload: {:?}", request);
 
                 let req_handler = match endpoint {
                     None => {
-                        debug!(
-                        "No handler registered for path: '{path}' and method: {method} not found."
-                    );
+                        debug!("No handler registered for path: '{path}' and method: {method} not found.");
                         Request::create(path, Handler::not_found(method))
                     }
                     Some(endpoint) => Request::create(path, endpoint.clone()),
@@ -109,7 +107,6 @@ impl Handler {
                 let response_len = response.len();
                 let mut written = *written_bytes;
                 while written != response_len {
-                    debug!("writting...");
                     match connection.write(&response.as_bytes()[written..]) {
                         Ok(0) => {
                             debug!("client hung up");
@@ -160,6 +157,20 @@ impl Handler {
     }
 }
 
+fn path_matches_pattern(pattern: &str, path: &str) -> bool {
+    let split_pattern = pattern.split('/').collect::<Vec<&str>>();
+    let split_path = path.split('/').collect::<Vec<&str>>();
+
+    if split_pattern.len() != split_path.len() {
+        return false;
+    }
+
+    (0..split_path.len())
+        .map(|i| split_path[i] == split_pattern[i] || split_pattern[i].starts_with(':'))
+        .reduce(|acc, e| acc && e)
+        .unwrap()
+}
+
 impl PartialEq for Handler {
     fn eq(&self, other: &Self) -> bool {
         self.path.to_lowercase() == other.path.to_lowercase()
@@ -175,3 +186,76 @@ impl Hash for Handler {
 }
 
 impl Eq for Handler {}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cmp::min,
+        collections::HashSet,
+        io::{Read, Write},
+    };
+
+    use env_logger::Env;
+
+    use crate::{
+        futures::workers::Workers,
+        http::{response::Response, ConnState, Request},
+    };
+
+    use super::Handler;
+
+    struct FakeConn {
+        read_data: Vec<u8>,
+        write_data: Vec<u8>,
+    }
+
+    impl Read for FakeConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let size: usize = min(self.read_data.len(), buf.len());
+            buf[..size].copy_from_slice(&self.read_data[..size]);
+            Ok(size)
+        }
+    }
+
+    impl Write for FakeConn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.write_data = Vec::from(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn async_can_read_and_match_the_right_handler() {
+        env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+
+        let workers = Workers::new(1);
+        let handler = Handler::new("/some/:id", "GET", |_| {
+            Ok(Response::create(200, "ugh".to_string()))
+        });
+        let http_req = b"GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
+        let mut contents = vec![0u8; http_req.len()];
+        contents[..http_req.len()].clone_from_slice(http_req);
+        let conn = FakeConn {
+            read_data: contents,
+            write_data: Vec::new(),
+        };
+
+        let handler_clj = handler.clone();
+        let result = workers.queue_with_result(async move {
+            let endpoints = HashSet::from([handler_clj]);
+            Handler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), &endpoints).await
+        });
+        let (_, conn_state) = result.unwrap().get().unwrap();
+        println!("kok");
+        assert_eq!(
+            conn_state,
+            ConnState::Write(Request::create("/some/1", handler), 0)
+        );
+    }
+
+    //TODO [FL]: add tests for all stages
+}
