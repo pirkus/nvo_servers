@@ -2,6 +2,7 @@ use crate::http::response::Response;
 use crate::http::ConnState;
 use crate::http::Request;
 use log::{debug, error};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -27,7 +28,7 @@ impl Handler {
     where
         S: Write + Read,
     {
-        let request = Request::create(path.as_str(), Self::not_found("fix_me"));
+        let request = Request::create(path.as_str(), Self::not_found("fix_me"), HashMap::new());
         let res = (self.handler_func)(&request).unwrap(); // TODO[FL]: return 500 Internal somehow
         let status_code = res.status_code;
         let status_line = res.get_status_line();
@@ -91,9 +92,13 @@ impl Handler {
                 let req_handler = match endpoint {
                     None => {
                         debug!("No handler registered for path: '{path}' and method: {method} not found.");
-                        Request::create(path, Handler::not_found(method))
+                        Request::create(path, Handler::not_found(method), HashMap::new())
                     }
-                    Some(endpoint) => Request::create(path, endpoint.clone()),
+                    Some(endpoint) => Request::create(
+                        path,
+                        endpoint.clone(),
+                        extract_path_params(&endpoint.path, path),
+                    ),
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
             }
@@ -157,6 +162,28 @@ impl Handler {
     }
 }
 
+// TODO [FL]: extract the two methods below and test them properly?
+fn extract_path_params(pattern: &str, path: &str) -> HashMap<String, String> {
+    let split_pattern = pattern.split('/').collect::<Vec<&str>>();
+    let split_path = path.split('/').collect::<Vec<&str>>();
+
+    if split_pattern.len() != split_path.len() {
+        panic!("split_pattern.len() != split_path.len() - this should be done prior to calling this method")
+    }
+
+    (0..split_path.len())
+        .filter_map(|i| {
+            if split_pattern[i].starts_with(':') {
+                let mut chars = split_pattern[i].chars();
+                chars.next();
+                Some((chars.as_str().to_string(), split_path[i].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn path_matches_pattern(pattern: &str, path: &str) -> bool {
     let split_pattern = pattern.split('/').collect::<Vec<&str>>();
     let split_path = path.split('/').collect::<Vec<&str>>();
@@ -191,7 +218,7 @@ impl Eq for Handler {}
 mod tests {
     use std::{
         cmp::min,
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         io::{Read, Write},
     };
 
@@ -250,10 +277,16 @@ mod tests {
             Handler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), &endpoints).await
         });
         let (_, conn_state) = result.unwrap().get().unwrap();
-        println!("kok");
         assert_eq!(
             conn_state,
-            ConnState::Write(Request::create("/some/1", handler), 0)
+            ConnState::Write(
+                Request::create(
+                    "/some/1",
+                    handler.clone(),
+                    HashMap::from([("id".to_string(), "1".to_string())])
+                ),
+                0
+            )
         );
     }
 
