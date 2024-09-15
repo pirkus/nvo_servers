@@ -15,21 +15,20 @@ Multithreaded. Runs same amount of threads as CPU core count.
 Todo:
 1. Handle scenarios when handler_func throws
 2. Graceful shutdown
-3. Path params matching
-4. Query params matching
-5. And much more ...
+3. Query params matching
+4. And much more ...
 ```rust
 fn main() {
     let endpoints = HashSet::from([
         Endpoint::new(
             "/",
             "GET",
-            || Ok(Response::create(200, json!({"status": "ok"}).to_string()) ),
+            |_| Ok(Response::create(200, json!({"status": "ok"}).to_string()) ),
         ),
         Endpoint::new(
             "/who-am-i",
             "GET",
-            || Ok(Response::create(200, json!({"name": "Filip", "forehead_size": "never-ending"}).to_string()) ),
+            |_| Ok(Response::create(200, json!({"name": "Filip", "forehead_size": "never-ending"}).to_string()) ),
         )]);
 
     AsyncHttpServer::create_port(8090, endpoints)
@@ -42,8 +41,7 @@ Multithreaded. Runs same amount of threads as CPU core count.
 Todo:
 1. Handle scenarios when handler_func throws
 2. Graceful shutdown
-3. Path params matching
-4. Query params matching
+3. Query params matching
 5. And much more ...
 ```rust
 fn main() {
