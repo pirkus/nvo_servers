@@ -1,7 +1,4 @@
 use core::fmt;
-use std::collections::HashMap;
-
-use handler::Handler;
 
 #[cfg(target_os = "freebsd")]
 pub mod async_bsd_http_server;
@@ -18,16 +15,16 @@ pub mod response;
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
     pub path: String,
-    pub endpoint: Handler,
-    pub path_params: HashMap<String, String>,
+    pub method: String,
+    //    pub path_params: HashMap<String, String>,
 }
 
 impl Request {
-    pub fn create(path: &str, endpoint: Handler, path_params: HashMap<String, String>) -> Request {
+    pub fn create(path: &str, method: &str /*path_params: HashMap<String, String>*/) -> Request {
         Request {
             path: path.to_string(),
-            endpoint,
-            path_params,
+            method: method.to_string(),
+            //            path_params,
         }
     }
 }

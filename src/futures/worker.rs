@@ -42,18 +42,13 @@ impl Worker {
             }
         });
 
-        Worker {
-            _name: name,
-            _thread_handle,
-        }
+        Worker { _name: name, _thread_handle }
     }
 }
 
 impl Wake for Task {
     fn wake(self: Arc<Self>) {
-        self.sender
-            .send(self.clone())
-            .expect("Something went wrong while trying to re-queue a task");
+        self.sender.send(self.clone()).expect("Something went wrong while trying to re-queue a task");
     }
 }
 

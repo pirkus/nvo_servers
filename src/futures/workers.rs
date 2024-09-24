@@ -17,21 +17,16 @@ pub struct Workers {
 type ShareableResultHandle<T> = Arc<ResultHandle<T>>;
 
 impl Workers {
-    pub(crate) fn new(size: usize) -> Workers {
+    pub fn new(size: usize) -> Workers {
         let (sender, receiver) = channel::<Arc<Task>>();
         let receiver = Arc::new(Mutex::new(receiver));
-        let _workers = (0..size)
-            .map(|x| Worker::new(x.to_string(), receiver.clone()))
-            .collect();
+        let _workers = (0..size).map(|x| Worker::new(x.to_string(), receiver.clone())).collect();
 
         debug!("Starting {size} workers (threads).");
         Workers { _workers, sender }
     }
 
-    pub fn queue(
-        &self,
-        future: impl Future<Output = ()> + 'static + Send,
-    ) -> Result<(), SendError<Arc<Task>>> {
+    pub fn queue(&self, future: impl Future<Output = ()> + 'static + Send) -> Result<(), SendError<Arc<Task>>> {
         let task: Task = Task {
             future: Mutex::new(Some(Box::pin(future))),
             sender: self.sender.clone(),
@@ -39,10 +34,7 @@ impl Workers {
         self.sender.send(Arc::new(task))
     }
 
-    pub fn queue_with_result<F>(
-        &self,
-        future: F,
-    ) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<Task>>>
+    pub fn queue_with_result<F>(&self, future: F) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<Task>>>
     where
         F: Future + Send + 'static,
         F::Output: Send,
