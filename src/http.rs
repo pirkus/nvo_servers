@@ -1,5 +1,10 @@
 use core::fmt;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use handler::Handler;
 
@@ -51,3 +56,42 @@ impl fmt::Display for ConnState {
     }
 }
 //END: Connection State
+pub struct AsyncHandler {
+    foo: Box<dyn AsyncFn>,
+}
+
+impl<T: Send, F> AsyncFn for T
+where
+    T: Fn(u8) -> F,
+    F: Future<Output = u8> + 'static + Send,
+{
+    fn call(&self, args: u8) -> Pin<Box<dyn Future<Output = u8> + Send + 'static>> {
+        Box::pin(self(args))
+    }
+}
+
+trait AsyncFn: Send {
+    fn call(&self, args: u8) -> Pin<Box<dyn Future<Output = u8> + Send + 'static>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::futures::workers::Workers;
+
+    use super::AsyncHandler;
+
+    #[test]
+    fn z() {
+        async fn foo(x: u8) -> u8 {
+            x * 2
+        }
+
+        let workers = Workers::new(1);
+        workers.queue(async {
+            let z = AsyncHandler { foo: Box::new(foo) };
+            z.foo.call(2).await;
+        });
+    }
+}

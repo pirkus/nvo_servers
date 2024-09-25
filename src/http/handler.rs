@@ -37,18 +37,12 @@ impl Handler {
 
         let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
 
-        stream
-            .write_all(response.as_bytes())
-            .expect("Cannot write to output stream!");
+        stream.write_all(response.as_bytes()).expect("Cannot write to output stream!");
 
         Ok(status_code)
     }
 
-    pub async fn handle_async_better<S>(
-        mut connection: S,
-        conn_state: &ConnState,
-        endpoints: &HashSet<Handler>,
-    ) -> Option<(S, ConnState)>
+    pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, endpoints: &HashSet<Handler>) -> Option<(S, ConnState)>
     where
         S: Read + Write,
     {
@@ -67,9 +61,7 @@ impl Handler {
                             req.extend(buf.iter().clone());
                             read += n;
                         }
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            return Some((connection, ConnState::Read(req, read)))
-                        }
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req, read))),
                         Err(e) => panic!("{}", e),
                     }
                 }
@@ -83,9 +75,7 @@ impl Handler {
                 let _protocol = first_line[2];
                 let _headers = &request[1..];
 
-                let endpoint = endpoints
-                    .iter()
-                    .find(|x| x.method == method && path_matches_pattern(&x.path, path));
+                let endpoint = endpoints.iter().find(|x| x.method == method && path_matches_pattern(&x.path, path));
 
                 debug!("Request payload: {:?}", request);
 
@@ -94,11 +84,7 @@ impl Handler {
                         debug!("No handler registered for path: '{path}' and method: {method} not found.");
                         Request::create(path, Handler::not_found(method), HashMap::new())
                     }
-                    Some(endpoint) => Request::create(
-                        path,
-                        endpoint.clone(),
-                        extract_path_params(&endpoint.path, path),
-                    ),
+                    Some(endpoint) => Request::create(path, endpoint.clone(), extract_path_params(&endpoint.path, path)),
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
             }
@@ -107,8 +93,7 @@ impl Handler {
                 let status_line = res.get_status_line();
                 let contents = res.response_body;
                 let length = contents.len();
-                let response =
-                    format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+                let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
                 let response_len = response.len();
                 let mut written = *written_bytes;
                 while written != response_len {
@@ -118,9 +103,7 @@ impl Handler {
                             return Some((connection, ConnState::Flush));
                         }
                         Ok(n) => written += n,
-                        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                            return Some((connection, ConnState::Write(req.clone(), written)))
-                        }
+                        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Write(req.clone(), written))),
                         // Is this needed?
                         // Err(ref err) if err.kind() == Interrupted => {
                         //     return handle_connection_event(registry, connection, event, conn_state)
@@ -139,11 +122,7 @@ impl Handler {
         }
     }
 
-    pub fn new(
-        path: &str,
-        method: &str,
-        handler_func: fn(&Request) -> Result<Response, String>,
-    ) -> Handler {
+    pub fn new(path: &str, method: &str, handler_func: fn(&Request) -> Result<Response, String>) -> Handler {
         Handler {
             path: path.to_string(),
             method: method.to_string(),
@@ -153,12 +132,7 @@ impl Handler {
 
     pub(crate) fn not_found(method: &str) -> Handler {
         let method = method.to_owned();
-        Handler::new("", &method, |req| {
-            Ok(Response::create(
-                404,
-                format!("Resource: {req_path} not found.", req_path = req.path),
-            ))
-        })
+        Handler::new("", &method, |req| Ok(Response::create(404, format!("Resource: {req_path} not found.", req_path = req.path))))
     }
 }
 
@@ -200,8 +174,7 @@ fn path_matches_pattern(pattern: &str, path: &str) -> bool {
 
 impl PartialEq for Handler {
     fn eq(&self, other: &Self) -> bool {
-        self.path.to_lowercase() == other.path.to_lowercase()
-            && self.method.to_lowercase() == other.method.to_lowercase()
+        self.path.to_lowercase() == other.path.to_lowercase() && self.method.to_lowercase() == other.method.to_lowercase()
     }
 }
 
@@ -260,9 +233,7 @@ mod tests {
         env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
         let workers = Workers::new(1);
-        let handler = Handler::new("/some/:id", "GET", |_| {
-            Ok(Response::create(200, "ugh".to_string()))
-        });
+        let handler = Handler::new("/some/:id", "GET", |_| Ok(Response::create(200, "ugh".to_string())));
         let http_req = b"GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
         let mut contents = vec![0u8; http_req.len()];
         contents[..http_req.len()].clone_from_slice(http_req);
@@ -279,14 +250,7 @@ mod tests {
         let (_, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,
-            ConnState::Write(
-                Request::create(
-                    "/some/1",
-                    handler.clone(),
-                    HashMap::from([("id".to_string(), "1".to_string())])
-                ),
-                0
-            )
+            ConnState::Write(Request::create("/some/1", handler.clone(), HashMap::from([("id".to_string(), "1".to_string())])), 0)
         );
     }
 
