@@ -6,11 +6,11 @@ use std::{
 
 use crate::futures::workers::Workers;
 
-use super::{handler::Handler, ConnState};
+use super::{async_handler::AsyncHandler, ConnState};
 
 pub struct AsyncHttpServer {
     pub listen_addr: String,
-    pub endpoints: HashSet<Handler>,
+    pub endpoints: HashSet<Arc<AsyncHandler>>,
     pub workers: Workers,
     pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
     pub started: AtomicBool,

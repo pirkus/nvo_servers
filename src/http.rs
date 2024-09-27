@@ -1,11 +1,7 @@
 use core::fmt;
-use std::{
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
+use async_handler::AsyncHandler;
 use handler::Handler;
 
 #[cfg(target_os = "freebsd")]
@@ -14,12 +10,12 @@ pub mod async_http_server;
 #[cfg(target_os = "linux")]
 pub mod async_linux_http_server;
 
+pub mod async_handler;
 pub mod blocking_http_server;
 pub mod handler;
 pub mod http_status;
 pub mod response;
 
-// Request
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
     pub path: String,
@@ -36,13 +32,40 @@ impl Request {
         }
     }
 }
-//END: Request
 
-// Connection State
+#[derive(Clone)]
+pub struct AsyncRequest {
+    pub path: String,
+    pub handler: Arc<AsyncHandler>,
+    pub path_params: HashMap<String, String>,
+}
+
+impl AsyncRequest {
+    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>) -> Self {
+        AsyncRequest {
+            path: path.to_string(),
+            handler,
+            path_params,
+        }
+    }
+}
+
+impl std::fmt::Debug for AsyncRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncRequest").field("path", &self.path).field("path_params", &self.path_params).finish()
+    }
+}
+
+impl PartialEq for AsyncRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path && self.path_params == other.path_params
+    }
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum ConnState {
     Read(Vec<u8>, usize),
-    Write(Request, usize),
+    Write(AsyncRequest, usize),
     Flush,
 }
 
@@ -53,45 +76,5 @@ impl fmt::Display for ConnState {
             ConnState::Write(_, _) => write!(f, "Write"),
             ConnState::Flush => write!(f, "Flush"),
         }
-    }
-}
-//END: Connection State
-pub struct AsyncHandler {
-    foo: Box<dyn AsyncFn>,
-}
-
-impl<T: Send, F> AsyncFn for T
-where
-    T: Fn(u8) -> F,
-    F: Future<Output = u8> + 'static + Send,
-{
-    fn call(&self, args: u8) -> Pin<Box<dyn Future<Output = u8> + Send + 'static>> {
-        Box::pin(self(args))
-    }
-}
-
-trait AsyncFn: Send {
-    fn call(&self, args: u8) -> Pin<Box<dyn Future<Output = u8> + Send + 'static>>;
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use crate::futures::workers::Workers;
-
-    use super::AsyncHandler;
-
-    #[test]
-    fn z() {
-        async fn foo(x: u8) -> u8 {
-            x * 2
-        }
-
-        let workers = Workers::new(1);
-        workers.queue(async {
-            let z = AsyncHandler { foo: Box::new(foo) };
-            z.foo.call(2).await;
-        });
     }
 }
