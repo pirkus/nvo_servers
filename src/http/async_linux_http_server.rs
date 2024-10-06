@@ -1,30 +1,16 @@
+use super::async_handler::AsyncHandler;
+use super::async_http_server::{AsyncHttpServer, AsyncHttpServerBuilder, AsyncHttpServerTrt};
+use super::ConnState;
 use crate::log_panic;
 use epoll::ControlOptions::EPOLL_CTL_ADD;
 use epoll::{Event, Events};
-use log::{error, info};
-use std::collections::HashSet;
+use log::error;
+use std::io;
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
-use std::io;
 use std::sync::atomic::Ordering;
-use super::async_handler::AsyncHandler;
-use super::async_http_server::{AsyncHttpServer, AsyncHttpServerTrt};
-use super::ConnState;
 
 impl AsyncHttpServerTrt for AsyncHttpServer {
-    fn create_addr(listen_addr: &str, handlers: HashSet<AsyncHandler>) -> AsyncHttpServer {
-        AsyncHttpServer::new_default(listen_addr, handlers)
-    }
-
-    fn create_port(port: u32, handlers: HashSet<AsyncHandler>) -> AsyncHttpServer {
-        if port > 65535 {
-            panic!("Port cannot be higher than 65535, was: {port}")
-        }
-        let listen_addr = format!("0.0.0.0:{port}");
-        info!("Starting non-blocking IO HTTP server on: {listen_addr}");
-        AsyncHttpServer::new_default(&listen_addr, handlers)
-    }
-
     fn start_blocking(&self) {
         let listener = TcpListener::bind(&self.listen_addr).unwrap_or_else(|e| log_panic!("Could not start listening on {addr}, reason:\n{reason}", addr = self.listen_addr, reason = e.to_string()));
         listener
@@ -95,5 +81,9 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
     fn shutdown_gracefully(self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.workers.poison_all()
+    }
+
+    fn builder() -> AsyncHttpServerBuilder {
+        AsyncHttpServerBuilder::default()
     }
 }

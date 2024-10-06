@@ -8,7 +8,7 @@ use std::task::{Context, Wake, Waker};
 use std::thread;
 use std::thread::JoinHandle;
 
-pub type Work = Box<dyn Future<Output=()> + Send + 'static>;
+pub type Work = Box<dyn Future<Output = ()> + Send + 'static>;
 
 pub struct Task {
     pub future: Mutex<Option<Pin<Work>>>,
@@ -44,7 +44,7 @@ impl Worker {
                             }
                         }
 
-                        ChannelMsg::Shutdown => break
+                        ChannelMsg::Shutdown => break,
                     }
                 }
                 Err(e) => {
@@ -54,10 +54,7 @@ impl Worker {
             }
         });
 
-        Worker {
-            name,
-            thread_handle,
-        }
+        Worker { name, thread_handle }
     }
 
     pub fn gracefully_shutdown(self, sender: Sender<Arc<ChannelMsg>>) {
@@ -71,11 +68,9 @@ impl Wake for ChannelMsg {
     fn wake(self: Arc<Self>) {
         let self_clone = self.clone();
         match self.deref() {
-            ChannelMsg::Task(task) => task.sender
-                .send(self_clone)
-                .expect("Something went wrong while trying to re-queue a task"),
+            ChannelMsg::Task(task) => task.sender.send(self_clone).expect("Something went wrong while trying to re-queue a task"),
 
-            ChannelMsg::Shutdown => return
+            ChannelMsg::Shutdown => (),
         }
     }
 }
@@ -96,12 +91,10 @@ mod tests {
         let boxed_future = Box::pin(async {
             IS_MODIFIED.swap(true, Relaxed);
         });
-        let task = ChannelMsg::Task(
-            Task {
-                future: Mutex::new(Some(boxed_future)),
-                sender: sender.clone(),
-            }
-        );
+        let task = ChannelMsg::Task(Task {
+            future: Mutex::new(Some(boxed_future)),
+            sender: sender.clone(),
+        });
         sender.send(Arc::new(task)).unwrap();
 
         while !IS_MODIFIED.load(Relaxed) {
