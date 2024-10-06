@@ -1,49 +1,31 @@
-use crate::futures::workers::Workers;
-use crate::http::handler::Handler;
 use crate::log_panic;
 use epoll::ControlOptions::EPOLL_CTL_ADD;
 use epoll::{Event, Events};
 use log::{error, info};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-use std::{io, thread};
-
+use std::io;
+use std::sync::atomic::Ordering;
 use super::async_handler::AsyncHandler;
-use super::async_http_server::AsyncHttpServer;
+use super::async_http_server::{AsyncHttpServer, AsyncHttpServerTrt};
 use super::ConnState;
 
-impl AsyncHttpServer {
-    pub fn create_addr(listen_addr: String, handlers: HashSet<AsyncHandler>) -> AsyncHttpServer {
-        let thread_count = thread::available_parallelism().unwrap().get();
-        AsyncHttpServer {
-            listen_addr,
-            endpoints: handlers.into_iter().map(|x| Arc::new(x)).collect(),
-            workers: Workers::new(thread_count),
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            started: AtomicBool::new(false),
-        }
+impl AsyncHttpServerTrt for AsyncHttpServer {
+    fn create_addr(listen_addr: &str, handlers: HashSet<AsyncHandler>) -> AsyncHttpServer {
+        AsyncHttpServer::new_default(listen_addr, handlers)
     }
 
-    pub fn create_port(port: u32, handlers: HashSet<AsyncHandler>) -> AsyncHttpServer {
+    fn create_port(port: u32, handlers: HashSet<AsyncHandler>) -> AsyncHttpServer {
         if port > 65535 {
             panic!("Port cannot be higher than 65535, was: {port}")
         }
         let listen_addr = format!("0.0.0.0:{port}");
-        let thread_count = thread::available_parallelism().unwrap().get();
         info!("Starting non-blocking IO HTTP server on: {listen_addr}");
-        AsyncHttpServer {
-            listen_addr,
-            endpoints: handlers.into_iter().map(|x| Arc::new(x)).collect(),
-            workers: Workers::new(thread_count),
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            started: AtomicBool::new(false),
-        }
+        AsyncHttpServer::new_default(&listen_addr, handlers)
     }
 
-    pub fn start_blocking(&self) {
+    fn start_blocking(&self) {
         let listener = TcpListener::bind(&self.listen_addr).unwrap_or_else(|e| log_panic!("Could not start listening on {addr}, reason:\n{reason}", addr = self.listen_addr, reason = e.to_string()));
         listener
             .set_nonblocking(true)
@@ -58,6 +40,9 @@ impl AsyncHttpServer {
         // To add multithreading: spawn a new thread around here
         // events arr cannot be shared between threads, would be hard in rust anyway :D
         loop {
+            if self.shutdown_requested.load(Ordering::SeqCst) {
+                return;
+            }
             self.started.store(true, std::sync::atomic::Ordering::SeqCst);
 
             let mut events = [Event::new(Events::empty(), 0); 1024];
@@ -92,7 +77,7 @@ impl AsyncHttpServer {
                         let endpoint = self.endpoints.clone();
                         self.workers
                             .queue(async move {
-                                if let Some((conn, new_state)) = Handler::handle_async_better(conn, &conn_status, endpoint).await {
+                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, endpoint).await {
                                     if new_state != ConnState::Flush {
                                         conns.lock().expect("Poisoned").insert(fd, (conn, new_state));
                                     } else {
@@ -105,5 +90,10 @@ impl AsyncHttpServer {
                 }
             }
         }
+    }
+
+    fn shutdown_gracefully(self) {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
+        self.workers.poison_all()
     }
 }

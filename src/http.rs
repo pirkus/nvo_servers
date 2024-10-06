@@ -15,6 +15,7 @@ pub mod blocking_http_server;
 pub mod handler;
 pub mod http_status;
 pub mod response;
+mod helpers;
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
