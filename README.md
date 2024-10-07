@@ -18,6 +18,8 @@ nvo_servers = { git = "https://github.com/pirkus/nvo_servers", version = "v0.0.2
 ### Async I/O Http server
 Multithreaded. Runs same amount of threads as CPU core count.
 
+Supports FreeBSD and Linux. Adding support for macos and NetBSD should be trivial.
+
 Todo:
 1. Handle scenarios when handler_func throws
 2. And much more ...
