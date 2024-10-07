@@ -9,6 +9,12 @@ Not very opinionated servers
 
 ## Examples
 Are also available in ./examples directory
+
+### Cargo.toml
+```toml
+[dependencies]
+nvo_servers = { git = "https://github.com/pirkus/nvo_servers", version = "v0.0.2" }
+```
 ### Async I/O Http server
 Multithreaded. Runs same amount of threads as CPU core count.
 
