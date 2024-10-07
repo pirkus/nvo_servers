@@ -5,44 +5,36 @@ use std::sync::{Arc, Mutex};
 use crate::futures::result_handle::ResultHandle;
 use log::debug;
 
-use crate::futures::worker::Worker;
+use crate::futures::worker::{ChannelMsg, Worker};
 
 use super::worker::Task;
 
 pub struct Workers {
-    _workers: Vec<Worker>,
-    sender: Sender<Arc<Task>>,
+    workers: Vec<Worker>,
+    sender: Sender<Arc<ChannelMsg>>,
 }
 
 type ShareableResultHandle<T> = Arc<ResultHandle<T>>;
 
 impl Workers {
     pub(crate) fn new(size: usize) -> Workers {
-        let (sender, receiver) = channel::<Arc<Task>>();
+        let (sender, receiver) = channel::<Arc<ChannelMsg>>();
         let receiver = Arc::new(Mutex::new(receiver));
-        let _workers = (0..size)
-            .map(|x| Worker::new(x.to_string(), receiver.clone()))
-            .collect();
+        let _workers = (0..size).map(|x| Worker::new(x.to_string(), receiver.clone())).collect();
 
         debug!("Starting {size} workers (threads).");
-        Workers { _workers, sender }
+        Workers { workers: _workers, sender }
     }
 
-    pub fn queue(
-        &self,
-        future: impl Future<Output = ()> + 'static + Send,
-    ) -> Result<(), SendError<Arc<Task>>> {
+    pub fn queue(&self, future: impl Future<Output=()> + 'static + Send) -> Result<(), SendError<Arc<ChannelMsg>>> {
         let task: Task = Task {
             future: Mutex::new(Some(Box::pin(future))),
             sender: self.sender.clone(),
         };
-        self.sender.send(Arc::new(task))
+        self.sender.send(Arc::new(ChannelMsg::Task(task)))
     }
 
-    pub fn queue_with_result<F>(
-        &self,
-        future: F,
-    ) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<Task>>>
+    pub fn queue_with_result<F>(&self, future: F) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<Task>>>
     where
         F: Future + Send + 'static,
         F::Output: Send,
@@ -57,9 +49,16 @@ impl Workers {
             future: Mutex::new(Some(Box::pin(inner_future))),
             sender: self.sender.clone(),
         };
-        self.sender.send(Arc::new(task)).unwrap();
+        self.sender.send(Arc::new(ChannelMsg::Task(task))).unwrap();
 
         Ok(blocking_val_clone)
+    }
+
+    pub fn poison_all(self) {
+        self
+            .workers
+            .into_iter()
+            .for_each(|w| w.gracefully_shutdown(self.sender.clone()))
     }
 }
 
@@ -87,6 +86,8 @@ mod tests {
         while !IS_MODIFIED.load(Ordering::SeqCst) {
             sleep(Duration::from_millis(1));
         }
+
+        workers.poison_all();
     }
 
     #[test]
@@ -109,5 +110,7 @@ mod tests {
         IS_MODIFIED.swap(true, Ordering::SeqCst); // comment to 💀-🔐
         assert_eq!(res.unwrap().get(), a / b);
         assert_eq!(ORDER.lock().unwrap().clone(), [1, 2].to_vec());
+
+        workers.poison_all()
     }
 }

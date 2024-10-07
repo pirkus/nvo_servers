@@ -1,5 +1,6 @@
-use log::{debug, error};
+use log::{debug, error, info};
 use std::future::Future;
+use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -11,28 +12,39 @@ pub type Work = Box<dyn Future<Output = ()> + Send + 'static>;
 
 pub struct Task {
     pub future: Mutex<Option<Pin<Work>>>,
-    pub sender: Sender<Arc<Task>>,
+    pub sender: Sender<Arc<ChannelMsg>>,
+}
+
+pub enum ChannelMsg {
+    Task(Task),
+    Shutdown,
 }
 
 pub struct Worker {
-    _name: String,
-    _thread_handle: JoinHandle<()>,
+    name: String,
+    thread_handle: JoinHandle<()>,
 }
 
 impl Worker {
-    pub(crate) fn new(name: String, recv: Arc<Mutex<Receiver<Arc<Task>>>>) -> Worker {
+    pub(crate) fn new(name: String, recv: Arc<Mutex<Receiver<Arc<ChannelMsg>>>>) -> Worker {
         let worker_name = name.clone();
-        let _thread_handle = thread::spawn(move || loop {
+        let thread_handle = thread::spawn(move || loop {
             match recv.lock().unwrap().recv() {
-                Ok(task) => {
+                Ok(task_ptr) => {
                     debug!("Executing job. Worker name: {worker_name}");
-                    let mut future_mutex = task.future.lock().unwrap();
-                    if let Some(mut future) = future_mutex.take() {
-                        let waker = Waker::from(task.clone());
-                        let context = &mut Context::from_waker(&waker);
-                        if future.as_mut().poll(context).is_pending() {
-                            *future_mutex = Some(future)
+                    match task_ptr.deref() {
+                        ChannelMsg::Task(task) => {
+                            let mut future_mutex = task.future.lock().unwrap();
+                            if let Some(mut future) = future_mutex.take() {
+                                let waker = Waker::from(task_ptr.clone());
+                                let context = &mut Context::from_waker(&waker);
+                                if future.as_mut().poll(context).is_pending() {
+                                    *future_mutex = Some(future)
+                                }
+                            }
                         }
+
+                        ChannelMsg::Shutdown => break,
                     }
                 }
                 Err(e) => {
@@ -42,18 +54,24 @@ impl Worker {
             }
         });
 
-        Worker {
-            _name: name,
-            _thread_handle,
-        }
+        Worker { name, thread_handle }
+    }
+
+    pub fn gracefully_shutdown(self, sender: Sender<Arc<ChannelMsg>>) {
+        info!("Gracefully shutting down worker {}", self.name);
+        sender.send(Arc::new(ChannelMsg::Shutdown)).unwrap();
+        self.thread_handle.join().unwrap();
     }
 }
 
-impl Wake for Task {
+impl Wake for ChannelMsg {
     fn wake(self: Arc<Self>) {
-        self.sender
-            .send(self.clone())
-            .expect("Something went wrong while trying to re-queue a task");
+        let self_clone = self.clone();
+        match self.deref() {
+            ChannelMsg::Task(task) => task.sender.send(self_clone).expect("Something went wrong while trying to re-queue a task"),
+
+            ChannelMsg::Shutdown => (),
+        }
     }
 }
 
@@ -68,19 +86,21 @@ mod tests {
     #[test]
     fn worker_can_process_work() {
         static IS_MODIFIED: AtomicBool = AtomicBool::new(false);
-        let (sender, recv) = channel::<Arc<Task>>();
-        Worker::new("a-worker".to_string(), Arc::new(Mutex::new(recv)));
+        let (sender, recv) = channel::<Arc<ChannelMsg>>();
+        let worker = Worker::new("a-worker".to_string(), Arc::new(Mutex::new(recv)));
         let boxed_future = Box::pin(async {
             IS_MODIFIED.swap(true, Relaxed);
         });
-        let task: Task = Task {
+        let task = ChannelMsg::Task(Task {
             future: Mutex::new(Some(boxed_future)),
             sender: sender.clone(),
-        };
+        });
         sender.send(Arc::new(task)).unwrap();
 
         while !IS_MODIFIED.load(Relaxed) {
             thread::sleep(Duration::from_millis(10));
         }
+
+        worker.gracefully_shutdown(sender)
     }
 }

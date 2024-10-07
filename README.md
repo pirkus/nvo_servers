@@ -18,21 +18,20 @@ Todo:
 3. Query params matching
 4. And much more ...
 ```rust
-fn main() {
-    let endpoints = HashSet::from([
-        Endpoint::new(
-            "/",
-            "GET",
-            |_| Ok(Response::create(200, json!({"status": "ok"}).to_string()) ),
-        ),
-        Endpoint::new(
-            "/who-am-i",
-            "GET",
-            |_| Ok(Response::create(200, json!({"name": "Filip", "forehead_size": "never-ending"}).to_string()) ),
-        )]);
+pub fn main() {
+  async fn status_handler(_: AsyncRequest) -> Result<Response, String> {
+    Ok(Response::create(200, json!({"status": "ok"}).to_string()))
+  }
 
-    AsyncHttpServer::create_port(8090, endpoints)
-        .start_blocking();
+  let status_endpoint = AsyncHandler::new("GET", "/status", status_handler);
+
+  env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
+  AsyncHttpServer::builder()
+    .with_port(8090)
+    .with_handlers(HashSet::from([status_endpoint]))
+    .build()
+    .start_blocking()
 }
 ```
 ### Blocking I/O Http server

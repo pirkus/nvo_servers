@@ -4,12 +4,14 @@ use nvo_servers::http::blocking_http_server::{HttpServer, HttpServerTrt};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::thread;
+use nvo_servers::http::handler::Handler;
+use nvo_servers::http::response::Response;
 
 #[test]
 fn get_works() {
     env_logger::init();
     let port = 8090;
-    let endpoints = HashSet::from([common::get_status_handler()]);
+    let endpoints = HashSet::from([Handler::new("/status", "GET", |_| Ok(Response::create(200, "{\"status\": \"ok\"}".to_string())))]);
     let server = HttpServer::create_port(port, endpoints);
     let _server_thread = thread::spawn(move || server.start_blocking());
     let body: String = ureq::get(format!("http://localhost:{port}/status").as_str())

@@ -3,7 +3,7 @@ mod common;
 #[test]
 #[cfg(target_os = "linux")]
 fn get_works() {
-    use nvo_servers::http::async_http_server::AsyncHttpServer;
+    use nvo_servers::http::async_http_server::{AsyncHttpServer, AsyncHttpServerTrt};
     use serde_json::Value;
     use std::collections::HashSet;
     use std::sync::Arc;
@@ -13,8 +13,8 @@ fn get_works() {
 
     env_logger::init();
     let port = 8090;
-    let endpoints = HashSet::from([common::get_status_handler()]);
-    let server = Arc::new(AsyncHttpServer::create_port(port, endpoints));
+    let handlers = HashSet::from([common::get_status_handler()]);
+    let server = Arc::new(AsyncHttpServer::builder().with_port(port).with_handlers(handlers).build());
     let server_clj = server.clone();
     let _server_thread = thread::spawn(move || server_clj.start_blocking());
 
