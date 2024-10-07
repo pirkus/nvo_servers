@@ -2,7 +2,7 @@ mod common;
 
 #[cfg(target_os = "freebsd")]
 mod async_bsd_tests {
-    use nvo_servers::http::async_http_server::AsyncHttpServer;
+    use nvo_servers::http::async_http_server::{AsyncHttpServer, AsyncHttpServerTrt};
 
     use env_logger::Env;
     use serde_json::Value;
@@ -14,16 +14,14 @@ mod async_bsd_tests {
 
     #[test]
     fn get_works() {
-        env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+        env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
         let port = 8090;
         let endpoints = HashSet::from([common::get_status_handler()]);
-        let server = Arc::new(AsyncHttpServer::create_port(port, endpoints));
+        let server = Arc::new(AsyncHttpServer::builder().with_port(port).with_handlers(endpoints).build());
         let server_clj = server.clone();
         let _server_thread = thread::spawn(move || server_clj.start_blocking());
-
         common::wait_for_server_to_start(server);
-
         let body: String = ureq::get(format!("http://localhost:{port}/status").as_str())
             .set("Example-Header", "header value")
             .call()
