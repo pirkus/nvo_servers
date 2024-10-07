@@ -14,9 +14,7 @@ Multithreaded. Runs same amount of threads as CPU core count.
 
 Todo:
 1. Handle scenarios when handler_func throws
-2. Graceful shutdown
-3. Query params matching
-4. And much more ...
+2. And much more ...
 ```rust
 pub fn main() {
   async fn status_handler(_: AsyncRequest) -> Result<Response, String> {
