@@ -29,7 +29,7 @@ pub fn main() {
 
   AsyncHttpServer::builder()
     .with_port(8090)
-	.with_handlers(HashSet::from([status_endpoint]))
+    .with_handlers(HashSet::from([status_endpoint]))
 	.build()
 	.start_blocking()
 }
