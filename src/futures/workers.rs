@@ -17,7 +17,7 @@ pub struct Workers {
 type ShareableResultHandle<T> = Arc<ResultHandle<T>>;
 
 impl Workers {
-    pub(crate) fn new(size: usize) -> Workers {
+    pub fn new(size: usize) -> Workers {
         let (sender, receiver) = channel::<Arc<ChannelMsg>>();
         let receiver = Arc::new(Mutex::new(receiver));
         let _workers = (0..size).map(|x| Worker::new(x.to_string(), receiver.clone())).collect();
@@ -26,7 +26,7 @@ impl Workers {
         Workers { workers: _workers, sender }
     }
 
-    pub fn queue(&self, future: impl Future<Output=()> + 'static + Send) -> Result<(), SendError<Arc<ChannelMsg>>> {
+    pub fn queue(&self, future: impl Future<Output = ()> + 'static + Send) -> Result<(), SendError<Arc<ChannelMsg>>> {
         let task: Task = Task {
             future: Mutex::new(Some(Box::pin(future))),
             sender: self.sender.clone(),
@@ -55,10 +55,7 @@ impl Workers {
     }
 
     pub fn poison_all(self) {
-        self
-            .workers
-            .into_iter()
-            .for_each(|w| w.gracefully_shutdown(self.sender.clone()))
+        self.workers.into_iter().for_each(|w| w.gracefully_shutdown(self.sender.clone()))
     }
 }
 
