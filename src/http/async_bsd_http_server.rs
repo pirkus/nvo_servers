@@ -10,10 +10,8 @@ use super::async_http_server::{AsyncHttpServer, AsyncHttpServerBuilder, AsyncHtt
 
 impl AsyncHttpServerTrt for AsyncHttpServer {
     fn start_blocking(&self) {
-        info!("huh");
         let listener = TcpListener::bind(&self.listen_addr).unwrap();
         listener.set_nonblocking(true).unwrap();
-        info!("non-block");
         let kqueue = unsafe { kqueue_sys::kqueue() };
         let sock_kevent = kqueue_sys::kevent::new(
             listener.as_raw_fd() as usize,
@@ -27,9 +25,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
         }
 
         loop {
-            info!("Before store");
             self.started.store(true, std::sync::atomic::Ordering::SeqCst);
-            info!("After store");
             // extract this, the contents does not matter
             let mut kevent = kqueue_sys::kevent::new(0, kqueue_sys::EventFilter::EVFILT_EMPTY, kqueue_sys::EventFlag::empty(), kqueue_sys::FilterFlag::empty());
             let events_number = unsafe { kqueue_sys::kevent(kqueue, core::ptr::null(), 0, &mut kevent, 1, core::ptr::null()) };
