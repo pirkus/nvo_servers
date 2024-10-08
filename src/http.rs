@@ -13,9 +13,9 @@ pub mod async_linux_http_server;
 pub mod async_handler;
 pub mod blocking_http_server;
 pub mod handler;
+mod helpers;
 pub mod http_status;
 pub mod response;
-mod helpers;
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
