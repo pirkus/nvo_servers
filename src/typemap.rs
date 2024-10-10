@@ -4,8 +4,9 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Clone)]
 pub struct TypeMap {
-    map: HashMap<TypeId, Arc<dyn Any>>,
+    map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
 impl TypeMap {

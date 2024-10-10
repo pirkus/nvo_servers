@@ -4,6 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 use async_handler::AsyncHandler;
 use handler::Handler;
 
+use crate::typemap::TypeMap;
+
 #[cfg(target_os = "freebsd")]
 pub mod async_bsd_http_server;
 pub mod async_http_server;
@@ -39,6 +41,7 @@ pub struct AsyncRequest {
     pub path: String,
     pub handler: Arc<AsyncHandler>,
     pub path_params: HashMap<String, String>,
+    pub deps: TypeMap,
 }
 
 impl AsyncRequest {
@@ -47,6 +50,7 @@ impl AsyncRequest {
             path: path.to_string(),
             handler,
             path_params,
+            deps: TypeMap::default(),
         }
     }
 }
