@@ -13,17 +13,13 @@ impl TypeMap {
         TypeMap { map: HashMap::new() }
     }
 
-    pub fn insert<T: Any + Sync + Send + Clone>(&mut self, any: T) {
-        println!("{:?}", any.type_id());
+    pub fn insert<T: Any + Sync + Send>(&mut self, any: T) {
         self.map.insert(any.type_id(), Arc::new(any));
     }
 
-    pub fn get<T: Any + Sync + Send + Clone>(&mut self, type_id: &TypeId) -> Option<T> {
-        println!("{:?}", type_id);
-        let z = self.map.get(type_id).unwrap().clone();
-        print!("{:?}", z);
-        let get = self.map.get(type_id).unwrap().clone().downcast_ref().cloned();
-        get
+    pub fn get<T: Any + Sync + Send>(&mut self, type_id: &TypeId) -> Option<&T> {
+        //        let get = self.map.get(type_id).unwrap().clone().downcast_ref().cloned();
+        self.map.get(type_id).unwrap().downcast_ref::<T>()
     }
 }
 
