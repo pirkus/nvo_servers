@@ -1,11 +1,12 @@
 use std::{
+    any::Any,
     collections::{HashMap, HashSet},
     net::TcpStream,
     sync::{atomic::AtomicBool, Arc, Mutex},
     thread,
 };
 
-use crate::futures::workers::Workers;
+use crate::{futures::workers::Workers, typemap::DepsMap};
 
 use super::{async_handler::AsyncHandler, ConnState};
 
@@ -22,12 +23,14 @@ pub struct AsyncHttpServer {
     pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
     pub started: AtomicBool,
     pub shutdown_requested: AtomicBool,
+    pub deps_map: DepsMap,
 }
 
 pub struct AsyncHttpServerBuilder {
     pub listen_addr: String,
     pub handlers: HashSet<AsyncHandler>,
     pub workers_number: usize,
+    pub deps_map: DepsMap,
 }
 
 impl AsyncHttpServerBuilder {
@@ -57,6 +60,16 @@ impl AsyncHttpServerBuilder {
         self
     }
 
+    pub fn with_dep(mut self, dep: impl Any + Sync + Send) -> AsyncHttpServerBuilder {
+        self.deps_map.insert(dep);
+        self
+    }
+
+    pub fn with_deps(mut self, deps: Vec<impl Any + Sync + Send>) -> AsyncHttpServerBuilder {
+        deps.into_iter().for_each(|d| self.deps_map.insert(d));
+        self
+    }
+
     pub fn with_custom_num_workers(mut self, num_workers: usize) -> AsyncHttpServerBuilder {
         self.workers_number = num_workers;
         self
@@ -70,6 +83,7 @@ impl AsyncHttpServerBuilder {
             connections: Default::default(),
             started: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
+            deps_map: self.deps_map,
         }
     }
 }
@@ -81,6 +95,7 @@ impl Default for AsyncHttpServerBuilder {
             listen_addr: "0.0.0.0:9000".to_string(),
             handlers: Default::default(),
             workers_number: thread_count,
+            deps_map: DepsMap::default(),
         }
     }
 }

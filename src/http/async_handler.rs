@@ -1,9 +1,9 @@
-use std::{future::Future, io, pin::Pin};
+use super::{helpers, response::Response, AsyncRequest, ConnState};
+use log::{debug, error};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::Arc;
-use log::{debug, error};
-use super::{helpers, response::Response, AsyncRequest, ConnState};
+use std::{future::Future, io, pin::Pin};
 
 pub struct AsyncHandler {
     pub method: String,
@@ -45,9 +45,7 @@ impl AsyncHandler {
                 let _protocol = first_line[2];
                 let _headers = &request[1..];
 
-                let endpoint = endpoints
-                    .iter()
-                    .find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
+                let endpoint = endpoints.iter().find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
 
                 debug!("Request payload: {:?}", request);
 
@@ -59,7 +57,7 @@ impl AsyncHandler {
                     Some(endpoint) => {
                         debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
                         AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path))
-                    },
+                    }
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
             }
@@ -134,7 +132,7 @@ impl AsyncHandler {
 impl<T: Send + Sync + 'static, F: Send + 'static> AsyncHandlerFn for T
 where
     T: Fn(AsyncRequest) -> F,
-    F: Future<Output = Result<Response, String>> ,
+    F: Future<Output = Result<Response, String>>,
 {
     fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>> {
         Box::pin(self(args))
@@ -202,9 +200,7 @@ mod tests {
         };
 
         let handler_clj = handler.clone();
-        let result = workers.queue_with_result(async move {
-            AsyncHandler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj])).await
-        });
+        let result = workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj])).await });
         let (_, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,

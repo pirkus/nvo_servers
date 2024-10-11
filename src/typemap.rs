@@ -5,26 +5,29 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct TypeMap {
+pub struct DepsMap {
     map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
-impl TypeMap {
-    pub fn new() -> TypeMap {
-        TypeMap { map: HashMap::new() }
+impl DepsMap {
+    pub fn new() -> DepsMap {
+        DepsMap { map: HashMap::new() }
     }
 
     pub fn insert<T: Any + Sync + Send>(&mut self, any: T) {
         self.map.insert(any.type_id(), Arc::new(any));
     }
 
-    pub fn get<T: Any + Sync + Send>(&mut self, type_id: &TypeId) -> Option<&T> {
-        //        let get = self.map.get(type_id).unwrap().clone().downcast_ref().cloned();
-        self.map.get(type_id).unwrap().downcast_ref::<T>()
+    pub fn get<T: Any + Sync + Send>(&mut self) -> Option<&T> {
+        //match self.map.get(&TypeId::of::<T>()) {
+        //    Some(dep) => Ok(dep.downcast_ref()),
+        //    None => AppErr::new("No type ", desc),
+        //}
+        self.map.get(&TypeId::of::<T>()).unwrap().downcast_ref::<T>()
     }
 }
 
-impl Default for TypeMap {
+impl Default for DepsMap {
     fn default() -> Self {
         Self::new()
     }
@@ -32,15 +35,13 @@ impl Default for TypeMap {
 
 #[cfg(test)]
 mod tests {
-    use std::any::TypeId;
-
-    use super::TypeMap;
+    use super::DepsMap;
 
     #[test]
     fn can_store_and_load() {
-        let mut type_map = TypeMap::new();
-        type_map.insert::<String>("a string".to_string());
+        let mut type_map = DepsMap::new();
+        type_map.insert("a string".to_string());
 
-        assert_eq!(*(type_map.get::<String>(&TypeId::of::<String>()).unwrap()), "a string".to_string());
+        assert_eq!(*type_map.get::<String>().unwrap(), "a string".to_string());
     }
 }
