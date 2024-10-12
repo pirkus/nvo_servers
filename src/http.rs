@@ -41,16 +41,16 @@ pub struct AsyncRequest {
     pub path: String,
     pub handler: Arc<AsyncHandler>,
     pub path_params: HashMap<String, String>,
-    pub deps: DepsMap,
+    pub deps: Arc<DepsMap>,
 }
 
 impl AsyncRequest {
-    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>) -> Self {
+    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>) -> Self {
         AsyncRequest {
             path: path.to_string(),
             handler,
             path_params,
-            deps: DepsMap::default(),
+            deps: deps,
         }
     }
 }

@@ -18,7 +18,7 @@ impl DepsMap {
         self.map.insert(any.type_id(), Arc::new(any));
     }
 
-    pub fn get<T: Any + Sync + Send>(&mut self) -> Option<&T> {
+    pub fn get<T: Any + Sync + Send>(&self) -> Option<&T> {
         //match self.map.get(&TypeId::of::<T>()) {
         //    Some(dep) => Ok(dep.downcast_ref()),
         //    None => AppErr::new("No type ", desc),

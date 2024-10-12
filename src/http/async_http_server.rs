@@ -23,7 +23,7 @@ pub struct AsyncHttpServer {
     pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
     pub started: AtomicBool,
     pub shutdown_requested: AtomicBool,
-    pub deps_map: DepsMap,
+    pub deps_map: Arc<DepsMap>,
 }
 
 pub struct AsyncHttpServerBuilder {
@@ -83,7 +83,7 @@ impl AsyncHttpServerBuilder {
             connections: Default::default(),
             started: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
-            deps_map: self.deps_map,
+            deps_map: Arc::new(self.deps_map),
         }
     }
 }
