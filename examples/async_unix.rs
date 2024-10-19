@@ -13,6 +13,9 @@ mod unix_example {
     use nvo_servers::http::response::Response;
     use nvo_servers::http::AsyncRequest;
     use serde_json::json;
+    use testcontainers::core::{ContainerPort, WaitFor};
+    use testcontainers::runners::SyncRunner;
+    use testcontainers::{GenericImage, ImageExt};
     use std::collections::HashSet;
     use serde::{ Deserialize, Serialize };
     use bson::doc;
@@ -25,27 +28,40 @@ mod unix_example {
 
     pub fn main() {
         async fn status_handler(req: AsyncRequest) -> Result<Response, String> {
-            let mongo = req.deps.get::<Client>();
+            let mongo = req.deps.get::<Client>().unwrap();
             let my_coll: Collection<Restaurant> = mongo
-                .unwrap()
                 .database("gym-log")
                 .collection("restaurants");
-            let doc = Restaurant { name: "kok".to_string(), cuisine: "terrible".to_string() };
-            my_coll.insert_one(&doc).await.unwrap();
-            let restaurant = my_coll.find_one(doc! { "name": "kok" }).await.unwrap().unwrap();
+            let doc = Restaurant { name: "bri'ish".to_string(), cuisine: "terrible".to_string() };
+            my_coll.insert_one(&doc, None).await.unwrap();
+            let restaurant = my_coll.find_one(doc! { "name": "bri'ish" }, None).await.unwrap().unwrap();
             println!("Name {name}, cuisine: {cuisine}", name = restaurant.name, cuisine = restaurant.cuisine);
             
             Ok(Response::create(200, json!({"status": "ok"}).to_string()))
         }
 
-        let status_endpoint = AsyncHandler::new("GET", "/status", status_handler);
+        async fn post_handler(req: AsyncRequest) -> Result<Response, String> {
+            Ok(Response::create(200, json!({"status_post": "ok"}).to_string()))
+        }
 
-        env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+        let status_endpoint = AsyncHandler::new("GET", "/status", status_handler);
+        let post_endpoint = AsyncHandler::new("POST", "/post", post_handler);
+
+        env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
         let async_runtime = Workers::new(1);
-        let uri = "mongodb+srv://pirkus:kokotko@gym-log.w9emv.mongodb.net/?retryWrites=true&w=majority&appName=gym-log";
+        let mongo = GenericImage::new("mongo", "6.0.7")
+        .with_wait_for(WaitFor::message_on_stdout("server is ready"))
+        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(27017))
+        .with_env_var("MONGO_INITDB_DATABASE", "gym-log")
+        .with_env_var("MONGO_INITDB_ROOT_USERNAME", "root")
+        .with_env_var("MONGO_INITDB_ROOT_PASSWORD", "root")
+        .start().unwrap();
+        let mongo_port = mongo.get_host_port_ipv4(ContainerPort::Tcp(27017)).unwrap();
+
+        let uri = format!("mongodb://root:root@localhost:{port}", port = mongo_port);
         let client = async_runtime.queue_with_result( async move { Client::with_uri_str(uri).await }).unwrap().get().unwrap();
 
-        AsyncHttpServer::builder().with_port(8090).with_handlers(HashSet::from([status_endpoint])).with_dep(client).build().start_blocking()
+        AsyncHttpServer::builder().with_port(8090).with_handlers(HashSet::from([status_endpoint, post_endpoint])).with_dep(client).build().start_blocking()
     }
 }
