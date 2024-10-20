@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, io, net::TcpStream, sync::Arc};
 
 use async_handler::AsyncHandler;
 use handler::Handler;
@@ -50,7 +50,7 @@ impl AsyncRequest {
             path: path.to_string(),
             handler,
             path_params,
-            deps: deps,
+            deps,
         }
     }
 }
@@ -81,5 +81,15 @@ impl fmt::Display for ConnState {
             ConnState::Write(_, _) => write!(f, "Write"),
             ConnState::Flush => write!(f, "Flush"),
         }
+    }
+}
+
+pub trait Peek {
+    fn peek(&self, buf: &mut [u8]) -> io::Result<usize>;
+}
+
+impl Peek for TcpStream {
+    fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
+        self.peek(buf)
     }
 }

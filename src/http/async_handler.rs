@@ -1,9 +1,11 @@
 use crate::typemap::DepsMap;
 
+use super::Peek;
 use super::{helpers, response::Response, AsyncRequest, ConnState};
 use log::{debug, error};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
+use std::str::from_utf8;
 use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
 
@@ -16,29 +18,35 @@ pub struct AsyncHandler {
 impl AsyncHandler {
     pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, endpoints: HashSet<Arc<AsyncHandler>>, deps_map: Arc<DepsMap>) -> Option<(S, ConnState)>
     where
-        S: Read + Write,
+        S: Read + Write + Peek,
     {
         match conn_state {
             ConnState::Read(req, read_bytes) => {
-                let mut req = req.clone();
-                let mut read = *read_bytes;
-                while read < 4 || &req[read - 4..read] != b"\r\n\r\n" {
-                    let mut buf = [0u8; 1024];
-                    match connection.read(&mut buf) {
-                        Ok(0) => {
-                            debug!("client disconnected unexpectedly");
-                            return Some((connection, ConnState::Flush));
-                        }
-                        Ok(n) => {
-                            req.extend(buf.iter().clone());
-                            read += n;
-                        }
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req, read))),
-                        Err(e) => panic!("{}", e),
+                let mut buf = [0u8; 8192];
+                match connection.peek(&mut buf) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Unpeekable stream. Error: {e}");
+                        return Some((connection, ConnState::Flush));
                     }
                 }
+                let http_req_size = match from_utf8(&buf).unwrap().find("\r\n\r\n") {
+                    Some(n) => n,
+                    None => {
+                        error!("Invalid request received");
+                        return Some((connection, ConnState::Flush));
+                    }
+                };
+                let mut buf = vec![0u8; http_req_size];
+                match connection.read_exact(&mut buf) {
+                    Ok(()) => {
+                        debug!("Read http req.");
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
+                    Err(e) => panic!("{}", e), // TODO: probably don't wanna blow up here
+                };
 
-                let raw_req = String::from_utf8_lossy(&req[..read]);
+                let raw_req = String::from_utf8_lossy(&buf);
                 let request: Vec<&str> = raw_req.split('\n').collect();
 
                 let first_line: Vec<&str> = request[0].split(' ').collect();
@@ -150,7 +158,7 @@ mod tests {
     use crate::futures::workers::Workers;
     use crate::http::async_handler::AsyncHandler;
     use crate::http::response::Response;
-    use crate::http::{AsyncRequest, ConnState};
+    use crate::http::{AsyncRequest, ConnState, Peek};
     use crate::typemap::DepsMap;
     use env_logger::Env;
     use std::collections::{HashMap, HashSet};
@@ -184,6 +192,14 @@ mod tests {
         }
     }
 
+    impl Peek for FakeConn {
+        fn peek(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let size: usize = min(self.read_data.len(), buf.len());
+            buf[..size].copy_from_slice(&self.read_data[..size]);
+            Ok(size)
+        }
+    }
+
     #[test]
     fn async_can_read_and_match_the_right_handler() {
         async fn ugh_handler(x: AsyncRequest) -> Result<Response, String> {
@@ -203,11 +219,15 @@ mod tests {
         };
 
         let handler_clj = handler.clone();
-        let result = workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+        let result =
+            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
         let (_, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,
-            ConnState::Write(AsyncRequest::create("/some/1", handler.clone(), HashMap::from([("id".to_string(), "1".to_string())]), Arc::new(DepsMap::default())), 0)
+            ConnState::Write(
+                AsyncRequest::create("/some/1", handler.clone(), HashMap::from([("id".to_string(), "1".to_string())]), Arc::new(DepsMap::default())),
+                0
+            )
         );
 
         workers.poison_all()
@@ -226,7 +246,10 @@ mod tests {
         let res = workers
             .queue_with_result(async move {
                 let async_handler = Arc::new(AsyncHandler::new("some method", "some path", foo));
-                async_handler.func.call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default())).clone()).await
+                async_handler
+                    .func
+                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default())).clone())
+                    .await
             })
             .unwrap()
             .get();
