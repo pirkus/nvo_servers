@@ -1,10 +1,9 @@
 use crate::typemap::DepsMap;
 
-use super::Peek;
+use super::ConnStream;
 use super::{helpers, response::Response, AsyncRequest, ConnState};
-use log::{debug, error};
+use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
@@ -18,7 +17,7 @@ pub struct AsyncHandler {
 impl AsyncHandler {
     pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, endpoints: HashSet<Arc<AsyncHandler>>, deps_map: Arc<DepsMap>) -> Option<(S, ConnState)>
     where
-        S: Read + Write + Peek,
+        S: ConnStream,
     {
         match conn_state {
             ConnState::Read(req, read_bytes) => {
@@ -33,7 +32,7 @@ impl AsyncHandler {
                 let http_req_size = match from_utf8(&buf).unwrap().find("\r\n\r\n") {
                     Some(n) => n,
                     None => {
-                        error!("Invalid request received");
+                        error!("Received not an HTTP request.");
                         return Some((connection, ConnState::Flush));
                     }
                 };
@@ -55,6 +54,8 @@ impl AsyncHandler {
                 let _protocol = first_line[2];
                 let _headers = &request[1..];
 
+                info!("http_req_size = {http_req_size}; ");
+
                 let endpoint = endpoints.iter().find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
 
                 debug!("Request payload: {:?}", request);
@@ -62,11 +63,17 @@ impl AsyncHandler {
                 let req_handler = match endpoint {
                     None => {
                         debug!("No handler registered for path: '{path}' and method: {method} not found.");
-                        AsyncRequest::create(path, Arc::new(AsyncHandler::not_found(method)), HashMap::new(), Arc::new(DepsMap::default()))
+                        AsyncRequest::create(
+                            path,
+                            Arc::new(AsyncHandler::not_found(method)),
+                            HashMap::new(),
+                            Arc::new(DepsMap::default()),
+                            connection.try_clone().unwrap(),
+                        )
                     }
                     Some(endpoint) => {
                         debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
-                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path), deps_map)
+                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path), deps_map, connection.try_clone().unwrap())
                     }
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
@@ -158,7 +165,7 @@ mod tests {
     use crate::futures::workers::Workers;
     use crate::http::async_handler::AsyncHandler;
     use crate::http::response::Response;
-    use crate::http::{AsyncRequest, ConnState, Peek};
+    use crate::http::{AsyncRequest, ConnState, ConnStream, Peek, TryClone};
     use crate::typemap::DepsMap;
     use env_logger::Env;
     use std::collections::{HashMap, HashSet};
@@ -168,6 +175,7 @@ mod tests {
         io::{Read, Write},
     };
 
+    #[derive(Clone)]
     struct FakeConn {
         read_data: Vec<u8>,
         write_data: Vec<u8>,
@@ -200,6 +208,14 @@ mod tests {
         }
     }
 
+    impl TryClone for FakeConn {
+        fn try_clone(&self) -> std::io::Result<Arc<dyn ConnStream>> {
+            Ok(Arc::new(self.clone()))
+        }
+    }
+
+    impl ConnStream for FakeConn {}
+
     #[test]
     fn async_can_read_and_match_the_right_handler() {
         async fn ugh_handler(x: AsyncRequest) -> Result<Response, String> {
@@ -219,13 +235,20 @@ mod tests {
         };
 
         let handler_clj = handler.clone();
+        let conn_clj = conn.clone();
         let result =
-            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
         let (_, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,
             ConnState::Write(
-                AsyncRequest::create("/some/1", handler.clone(), HashMap::from([("id".to_string(), "1".to_string())]), Arc::new(DepsMap::default())),
+                AsyncRequest::create(
+                    "/some/1",
+                    handler.clone(),
+                    HashMap::from([("id".to_string(), "1".to_string())]),
+                    Arc::new(DepsMap::default()),
+                    Arc::new(conn)
+                ),
                 0
             )
         );
@@ -241,14 +264,22 @@ mod tests {
             Ok(Response::create(200, x.path))
         }
 
+        let http_req = b"GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
+        let mut contents = vec![0u8; http_req.len()];
+        contents[..http_req.len()].clone_from_slice(http_req);
+        let conn = FakeConn {
+            read_data: contents,
+            write_data: Vec::new(),
+        };
         let workers = Workers::new(1);
         let some_path = "some_path";
+        let conn_clj = conn.try_clone().unwrap();
         let res = workers
             .queue_with_result(async move {
                 let async_handler = Arc::new(AsyncHandler::new("some method", "some path", foo));
                 async_handler
                     .func
-                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default())).clone())
+                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default()), conn_clj).clone())
                     .await
             })
             .unwrap()

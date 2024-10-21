@@ -1,5 +1,10 @@
 use core::fmt;
-use std::{collections::HashMap, io, net::TcpStream, sync::Arc};
+use std::{
+    collections::HashMap,
+    io::{self, Read, Write},
+    net::TcpStream,
+    sync::Arc,
+};
 
 use async_handler::AsyncHandler;
 use handler::Handler;
@@ -18,6 +23,8 @@ pub mod handler;
 mod helpers;
 pub mod http_status;
 pub mod response;
+
+pub trait ConnStream: Read + Write + Peek + TryClone + Send + Sync {}
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
@@ -42,17 +49,21 @@ pub struct AsyncRequest {
     pub handler: Arc<AsyncHandler>,
     pub path_params: HashMap<String, String>,
     pub deps: Arc<DepsMap>,
+    pub body: Arc<dyn ConnStream>,
 }
 
 impl AsyncRequest {
-    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>) -> Self {
+    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, body: Arc<dyn ConnStream>) -> Self {
         AsyncRequest {
             path: path.to_string(),
             handler,
             path_params,
             deps,
+            body,
         }
     }
+
+    //pub fn body(&self) -> String {}
 }
 
 impl std::fmt::Debug for AsyncRequest {
@@ -93,3 +104,16 @@ impl Peek for TcpStream {
         self.peek(buf)
     }
 }
+
+pub trait TryClone {
+    fn try_clone(&self) -> io::Result<Arc<dyn ConnStream>>;
+}
+
+// fuck TcpStream for returning itself on try_clone
+impl TryClone for TcpStream {
+    fn try_clone(&self) -> io::Result<Arc<dyn ConnStream>> {
+        Ok(Arc::new(self.try_clone().unwrap()))
+    }
+}
+
+impl ConnStream for TcpStream {}
