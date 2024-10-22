@@ -19,10 +19,6 @@ impl DepsMap {
     }
 
     pub fn get<T: Any + Sync + Send>(&self) -> Option<&T> {
-        //match self.map.get(&TypeId::of::<T>()) {
-        //    Some(dep) => Ok(dep.downcast_ref()),
-        //    None => AppErr::new("No type ", desc),
-        //}
         self.map.get(&TypeId::of::<T>()).unwrap().downcast_ref::<T>()
     }
 }
