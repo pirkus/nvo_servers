@@ -1,9 +1,6 @@
-use core::fmt;
+use core::{fmt};
 use std::{
-    collections::HashMap,
-    io::{self, Read, Write},
-    net::TcpStream,
-    sync::Arc,
+    collections::HashMap, io::{self, Read, Write}, net::TcpStream, sync::{Arc, Mutex}
 };
 
 use async_handler::AsyncHandler;
@@ -49,21 +46,46 @@ pub struct AsyncRequest {
     pub handler: Arc<AsyncHandler>,
     pub path_params: HashMap<String, String>,
     pub deps: Arc<DepsMap>,
-    pub body: Arc<dyn ConnStream>,
+    pub headers: HashMap<String, String>,
+    pub body: Arc<Mutex<dyn ConnStream>>,
 }
 
 impl AsyncRequest {
-    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, body: Arc<dyn ConnStream>) -> Self {
+    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, headers: HashMap<String, String>, body: Arc<Mutex<dyn ConnStream>>) -> Self {
         AsyncRequest {
             path: path.to_string(),
             handler,
             path_params,
             deps,
+            headers,
             body,
         }
     }
 
-    //pub fn body(&self) -> String {}
+    pub async fn body(&self) -> String {
+        // throw away \r\n\r\n which 4 chars 
+        let mut buf = vec![0u8; 4];
+        loop {
+            match self.body.lock().unwrap().read_exact(&mut buf) {
+                Ok(_) => break,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(_e) => panic!("Do we want to panic here")
+            };
+        }
+
+        // TODO: header names to be case insensitive and
+        // TODO: should we handle cases where content length is uknown? check RFC
+        let content_length = self.headers.get("Content-Length").unwrap().parse::<usize>().unwrap();
+        let mut buf = vec![0u8; content_length];
+        loop {
+            match self.body.lock().unwrap().read_exact(&mut buf) {
+                Ok(_) => break,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(_e) => panic!("Do we want to panic here")
+            };
+        }
+        String::from_utf8(buf).unwrap()
+    }
 }
 
 impl std::fmt::Debug for AsyncRequest {
@@ -106,13 +128,13 @@ impl Peek for TcpStream {
 }
 
 pub trait TryClone {
-    fn try_clone(&self) -> io::Result<Arc<dyn ConnStream>>;
+    fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>>;
 }
 
 // fuck TcpStream for returning itself on try_clone
 impl TryClone for TcpStream {
-    fn try_clone(&self) -> io::Result<Arc<dyn ConnStream>> {
-        Ok(Arc::new(self.try_clone().unwrap()))
+    fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>> {
+        Ok(Arc::new(Mutex::new(self.try_clone().unwrap())))
     }
 }
 

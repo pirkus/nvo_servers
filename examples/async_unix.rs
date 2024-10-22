@@ -42,7 +42,9 @@ mod unix_example {
         }
 
         async fn post_handler(_req: AsyncRequest) -> Result<Response, String> {
-            Ok(Response::create(200, json!({"status_post": "ok"}).to_string()))
+            println!("{:?}", _req.headers);
+            let buf = _req.body().await;
+            Ok(Response::create(200, json!({"recvd_body": buf}).to_string()))
         }
 
         let status_endpoint = AsyncHandler::new("GET", "/status", status_handler);

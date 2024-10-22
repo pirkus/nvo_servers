@@ -35,10 +35,10 @@ pub struct AsyncHttpServerBuilder {
 
 impl AsyncHttpServerBuilder {
     pub fn with_addr(mut self, addr: &str) -> AsyncHttpServerBuilder {
-        if addr.contains(":") {
+        if addr.contains(':') {
             self.listen_addr = addr.to_string();
         } else {
-            let mut split = addr.split(":");
+            let mut split = addr.split(':');
             self.listen_addr = format!("{addr}:{port}", port = split.nth(1).unwrap());
         }
         self
@@ -48,7 +48,7 @@ impl AsyncHttpServerBuilder {
         if port > 65536 {
             panic!("Port cannot be larger than 65535. Was: {port}")
         }
-        let hostname = self.listen_addr.split(":").nth(0).unwrap();
+        let hostname = self.listen_addr.split(':').nth(0).unwrap();
         self.listen_addr = format!("{hostname}:{port}");
         self
     }

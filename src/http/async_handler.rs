@@ -52,7 +52,16 @@ impl AsyncHandler {
                 let method = first_line[0];
                 let path = first_line[1];
                 let _protocol = first_line[2];
-                let _headers = &request[1..];
+                let headers = &request[1..]
+                    .iter()
+                    .map(|x| {
+                        if x.contains(':') {
+                            let split = x.split_once(':').unwrap();
+                            (split.0.trim().to_string(), split.1.trim().to_string())
+                        } else {
+                            (x.trim().to_string(), "".to_string())
+                        }
+                    }).collect::<HashMap<String,String>>();
 
                 info!("http_req_size = {http_req_size}; ");
 
@@ -68,12 +77,13 @@ impl AsyncHandler {
                             Arc::new(AsyncHandler::not_found(method)),
                             HashMap::new(),
                             Arc::new(DepsMap::default()),
+                            headers.clone(),
                             connection.try_clone().unwrap(),
                         )
                     }
                     Some(endpoint) => {
                         debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
-                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path), deps_map, connection.try_clone().unwrap())
+                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path), deps_map, headers.clone(), connection.try_clone().unwrap())
                     }
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
@@ -169,7 +179,7 @@ mod tests {
     use crate::typemap::DepsMap;
     use env_logger::Env;
     use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::{
         cmp::min,
         io::{Read, Write},
@@ -209,8 +219,8 @@ mod tests {
     }
 
     impl TryClone for FakeConn {
-        fn try_clone(&self) -> std::io::Result<Arc<dyn ConnStream>> {
-            Ok(Arc::new(self.clone()))
+        fn try_clone(&self) -> std::io::Result<Arc<Mutex<dyn ConnStream>>> {
+            Ok(Arc::new(Mutex::new(self.clone())))
         }
     }
 
@@ -247,7 +257,8 @@ mod tests {
                     handler.clone(),
                     HashMap::from([("id".to_string(), "1".to_string())]),
                     Arc::new(DepsMap::default()),
-                    Arc::new(conn)
+                    HashMap::new(),
+                    Arc::new(Mutex::new(conn))
                 ),
                 0
             )
@@ -279,7 +290,7 @@ mod tests {
                 let async_handler = Arc::new(AsyncHandler::new("some method", "some path", foo));
                 async_handler
                     .func
-                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default()), conn_clj).clone())
+                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default()), HashMap::new(), conn_clj).clone())
                     .await
             })
             .unwrap()
