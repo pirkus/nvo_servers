@@ -13,7 +13,7 @@ For best example look into ./examples/async_unix.rs. This example starts a mongo
 ### Cargo.toml
 ```toml
 [dependencies]
-nvo_servers = { git = "https://github.com/pirkus/nvo_servers", version = "v0.0.2" }
+nvo_servers = { git = "https://github.com/pirkus/nvo_servers", version = "v0.0.4" }
 ```
 ### Async I/O Http server
 Multithreaded. Runs same amount of threads as CPU core count.
