@@ -1,9 +1,12 @@
-use std::{future::Future, io, pin::Pin};
-use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
-use std::sync::Arc;
-use log::{debug, error};
+use crate::typemap::DepsMap;
+
+use super::ConnStream;
 use super::{helpers, response::Response, AsyncRequest, ConnState};
+use log::{debug, error, info};
+use std::collections::{HashMap, HashSet};
+use std::str::from_utf8;
+use std::sync::Arc;
+use std::{future::Future, io, pin::Pin};
 
 pub struct AsyncHandler {
     pub method: String,
@@ -12,54 +15,76 @@ pub struct AsyncHandler {
 }
 
 impl AsyncHandler {
-    pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, endpoints: HashSet<Arc<AsyncHandler>>) -> Option<(S, ConnState)>
+    pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, endpoints: HashSet<Arc<AsyncHandler>>, deps_map: Arc<DepsMap>) -> Option<(S, ConnState)>
     where
-        S: Read + Write,
+        S: ConnStream,
     {
         match conn_state {
             ConnState::Read(req, read_bytes) => {
-                let mut req = req.clone();
-                let mut read = *read_bytes;
-                while read < 4 || &req[read - 4..read] != b"\r\n\r\n" {
-                    let mut buf = [0u8; 1024];
-                    match connection.read(&mut buf) {
-                        Ok(0) => {
-                            debug!("client disconnected unexpectedly");
-                            return Some((connection, ConnState::Flush));
-                        }
-                        Ok(n) => {
-                            req.extend(buf.iter().clone());
-                            read += n;
-                        }
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req, read))),
-                        Err(e) => panic!("{}", e),
+                let mut buf = [0u8; 8192];
+                match connection.peek(&mut buf) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Unpeekable stream. Error: {e}");
+                        return Some((connection, ConnState::Flush));
                     }
                 }
+                let http_req_size = match from_utf8(&buf).unwrap().find("\r\n\r\n") {
+                    Some(n) => n,
+                    None => {
+                        error!("Received not an HTTP request.");
+                        return Some((connection, ConnState::Flush));
+                    }
+                };
+                let mut buf = vec![0u8; http_req_size];
+                match connection.read_exact(&mut buf) {
+                    Ok(()) => {
+                        debug!("Read http req.");
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
+                    Err(e) => panic!("{}", e), // TODO: probably don't wanna blow up here
+                };
 
-                let raw_req = String::from_utf8_lossy(&req[..read]);
+                let raw_req = String::from_utf8_lossy(&buf);
                 let request: Vec<&str> = raw_req.split('\n').collect();
 
                 let first_line: Vec<&str> = request[0].split(' ').collect();
                 let method = first_line[0];
                 let path = first_line[1];
                 let _protocol = first_line[2];
-                let _headers = &request[1..];
-
-                let endpoint = endpoints
+                let headers = &request[1..]
                     .iter()
-                    .find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
+                    .map(|x| {
+                        if x.contains(':') {
+                            let split = x.split_once(':').unwrap();
+                            (split.0.trim().to_string(), split.1.trim().to_string())
+                        } else {
+                            (x.trim().to_string(), "".to_string())
+                        }
+                    }).collect::<HashMap<String,String>>();
+
+                info!("http_req_size = {http_req_size}; ");
+
+                let endpoint = endpoints.iter().find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
 
                 debug!("Request payload: {:?}", request);
 
                 let req_handler = match endpoint {
                     None => {
                         debug!("No handler registered for path: '{path}' and method: {method} not found.");
-                        AsyncRequest::create(path, Arc::new(AsyncHandler::not_found(method)), HashMap::new())
+                        AsyncRequest::create(
+                            path,
+                            Arc::new(AsyncHandler::not_found(method)),
+                            HashMap::new(),
+                            Arc::new(DepsMap::default()),
+                            headers.clone(),
+                            connection.try_clone().unwrap(),
+                        )
                     }
                     Some(endpoint) => {
                         debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
-                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path))
-                    },
+                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path), deps_map, headers.clone(), connection.try_clone().unwrap())
+                    }
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
             }
@@ -134,7 +159,7 @@ impl AsyncHandler {
 impl<T: Send + Sync + 'static, F: Send + 'static> AsyncHandlerFn for T
 where
     T: Fn(AsyncRequest) -> F,
-    F: Future<Output = Result<Response, String>> ,
+    F: Future<Output = Result<Response, String>>,
 {
     fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>> {
         Box::pin(self(args))
@@ -150,15 +175,17 @@ mod tests {
     use crate::futures::workers::Workers;
     use crate::http::async_handler::AsyncHandler;
     use crate::http::response::Response;
-    use crate::http::{AsyncRequest, ConnState};
+    use crate::http::{AsyncRequest, ConnState, ConnStream, Peek, TryClone};
+    use crate::typemap::DepsMap;
     use env_logger::Env;
     use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::{
         cmp::min,
         io::{Read, Write},
     };
 
+    #[derive(Clone)]
     struct FakeConn {
         read_data: Vec<u8>,
         write_data: Vec<u8>,
@@ -183,6 +210,22 @@ mod tests {
         }
     }
 
+    impl Peek for FakeConn {
+        fn peek(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let size: usize = min(self.read_data.len(), buf.len());
+            buf[..size].copy_from_slice(&self.read_data[..size]);
+            Ok(size)
+        }
+    }
+
+    impl TryClone for FakeConn {
+        fn try_clone(&self) -> std::io::Result<Arc<Mutex<dyn ConnStream>>> {
+            Ok(Arc::new(Mutex::new(self.clone())))
+        }
+    }
+
+    impl ConnStream for FakeConn {}
+
     #[test]
     fn async_can_read_and_match_the_right_handler() {
         async fn ugh_handler(x: AsyncRequest) -> Result<Response, String> {
@@ -202,13 +245,23 @@ mod tests {
         };
 
         let handler_clj = handler.clone();
-        let result = workers.queue_with_result(async move {
-            AsyncHandler::handle_async_better(conn, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj])).await
-        });
+        let conn_clj = conn.clone();
+        let result =
+            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
         let (_, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,
-            ConnState::Write(AsyncRequest::create("/some/1", handler.clone(), HashMap::from([("id".to_string(), "1".to_string())])), 0)
+            ConnState::Write(
+                AsyncRequest::create(
+                    "/some/1",
+                    handler.clone(),
+                    HashMap::from([("id".to_string(), "1".to_string())]),
+                    Arc::new(DepsMap::default()),
+                    HashMap::new(),
+                    Arc::new(Mutex::new(conn))
+                ),
+                0
+            )
         );
 
         workers.poison_all()
@@ -222,12 +275,23 @@ mod tests {
             Ok(Response::create(200, x.path))
         }
 
+        let http_req = b"GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
+        let mut contents = vec![0u8; http_req.len()];
+        contents[..http_req.len()].clone_from_slice(http_req);
+        let conn = FakeConn {
+            read_data: contents,
+            write_data: Vec::new(),
+        };
         let workers = Workers::new(1);
         let some_path = "some_path";
+        let conn_clj = conn.try_clone().unwrap();
         let res = workers
             .queue_with_result(async move {
                 let async_handler = Arc::new(AsyncHandler::new("some method", "some path", foo));
-                async_handler.func.call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new()).clone()).await
+                async_handler
+                    .func
+                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default()), HashMap::new(), conn_clj).clone())
+                    .await
             })
             .unwrap()
             .get();

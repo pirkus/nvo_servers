@@ -59,11 +59,12 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                     let conns = self.connections.clone();
 
                     let option = conns.lock().expect("Poisoned").remove(&fd);
+                    let deps_map = self.deps_map.clone();
                     if let Some((conn, conn_status)) = option {
                         let endpoint = self.endpoints.clone();
                         self.workers
                             .queue(async move {
-                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, endpoint).await {
+                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, endpoint, deps_map).await {
                                     if new_state != ConnState::Flush {
                                         conns.lock().expect("Poisoned").insert(fd, (conn, new_state));
                                     } else {
