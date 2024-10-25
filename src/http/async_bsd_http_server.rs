@@ -1,7 +1,7 @@
 use crate::http::async_handler::AsyncHandler;
 use crate::http::ConnState;
 use kqueue_sys::EventFlag;
-use log::{debug, info};
+use log::debug;
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
 use std::{io, sync::atomic::Ordering};
@@ -75,9 +75,10 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                     if kevent.flags.contains(EventFlag::EV_EOF) || conn_status == ConnState::Flush {
                         drop(conn);
                     } else {
+                        let deps_map = self.deps_map.clone();
                         let result = self
                             .workers
-                            .queue_with_result(async move { AsyncHandler::handle_async_better(conn, &conn_status, endpoints).await })
+                            .queue_with_result(async move { AsyncHandler::handle_async_better(conn, &conn_status, endpoints, deps_map).await })
                             .expect("Could not retrieve result from future.")
                             .get();
                         if let Some((conn, conn_state)) = result {
