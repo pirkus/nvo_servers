@@ -8,7 +8,11 @@ Not very opinionated servers
 |main  |FreeBSD|[![Build Status](https://api.cirrus-ci.com/github/pirkus/nvo_servers.svg)](https://cirrus-ci.com/github/pirkus/nvo_servers)                                                               |
 
 ## Examples
-For best example look into ./examples/async_unix.rs. This example starts a mongodb in a container (docker is required). It contains a POST handler that saves body into DB and a GET request that parses a path argument and loads data from the DB. More examples are available in the ./examples directory
+For best example look into ./examples/async_unix.rs. 
+
+This example starts a mongodb in a container (docker is required). It contains a POST handler that saves body into DB and a GET request that parses a path argument and loads data from the DB. 
+
+More examples are available in the ./examples directory
 
 ### Cargo.toml
 ```toml
