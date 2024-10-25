@@ -8,7 +8,7 @@ Not very opinionated servers
 |main  |FreeBSD|[![Build Status](https://api.cirrus-ci.com/github/pirkus/nvo_servers.svg)](https://cirrus-ci.com/github/pirkus/nvo_servers)                                                               |
 
 ## Examples
-Are also available in ./examples directory
+For best example look into ./examples/async_unix.rs. This example starts a mongodb in a container (docker is required). It contains a POST handler that saves body into DB and a GET request that parses a path argument and loads data from the DB. More examples are available in the ./examples directory
 
 ### Cargo.toml
 ```toml
@@ -21,7 +21,7 @@ Multithreaded. Runs same amount of threads as CPU core count.
 Supports FreeBSD and Linux. Adding support for macos and NetBSD should be trivial.
 
 Todo:
-1. Handle scenarios when handler_func throws
+1. Unwind panics for handlers -> Handle scenarios when handler_func throws
 2. And much more ...
 ```rust
 pub fn main() {
@@ -40,7 +40,7 @@ pub fn main() {
     .start_blocking()
 }
 ```
-### Blocking I/O Http server
+### (Not working ATM) Blocking I/O Http server 
 Multithreaded. Runs same amount of threads as CPU core count.
 
 Todo:
