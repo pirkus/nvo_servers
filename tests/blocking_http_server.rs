@@ -25,4 +25,4 @@ fn get_works() {
 
     let resp: Value = serde_json::from_str(body.as_str()).unwrap();
     assert_eq!(resp["status"], "ok");
-}/*
+}*/
