@@ -1,3 +1,4 @@
+/* TODO: Fix me
 use env_logger::Env;
 use nvo_servers::http::blocking_http_server::{HttpServer, HttpServerTrt};
 use nvo_servers::http::handler::Handler;
@@ -14,3 +15,4 @@ fn main() {
 
     HttpServer::create_port(8090, HashSet::from([status_endpoint])).start_blocking()
 }
+*/
