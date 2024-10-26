@@ -21,6 +21,6 @@ fn get_works() {
     common::wait_for_server_to_start(server);
 
     let resp = reqwest::blocking::get(format!("http://localhost:{port}/status").as_str()).unwrap().text().unwrap();
-    let resp: Value = serde_json::from_str(body.as_str()).unwrap();
+    let resp: Value = serde_json::from_str(resp.as_str()).unwrap();
     assert_eq!(resp["status"], "ok");
 }
