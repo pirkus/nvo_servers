@@ -19,7 +19,7 @@ pub fn get_status_handler() -> AsyncHandler {
 
 #[allow(dead_code)]
 pub fn wait_for_server_to_start(server: Arc<AsyncHttpServer>) {
-    while !server.started.load(std::sync::atomic::Ordering::Relaxed) {
+    while !server.started.load(std::sync::atomic::Ordering::SeqCst) {
         thread::sleep(Duration::from_millis(10));
     }
 }

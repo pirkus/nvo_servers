@@ -1,6 +1,6 @@
 mod common;
 
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "freebsd", target_os = "macos"))]
 mod async_bsd_tests {
     use nvo_servers::http::async_http_server::{AsyncHttpServer, AsyncHttpServerTrt};
 
@@ -22,14 +22,9 @@ mod async_bsd_tests {
         let server_clj = server.clone();
         let _server_thread = thread::spawn(move || server_clj.start_blocking());
         common::wait_for_server_to_start(server);
-        let body: String = ureq::get(format!("http://localhost:{port}/status").as_str())
-            .set("Example-Header", "header value")
-            .call()
-            .unwrap()
-            .into_string()
-            .unwrap();
 
-        let resp: Value = serde_json::from_str(body.as_str()).unwrap();
+        let resp = reqwest::blocking::get(format!("http://localhost:{port}/status").as_str()).unwrap().text().unwrap();
+        let resp: Value = serde_json::from_str(resp.as_str()).unwrap();
         assert_eq!(resp["status"], "ok");
     }
 }

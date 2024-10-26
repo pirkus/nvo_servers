@@ -27,7 +27,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
         loop {
             self.started.store(true, std::sync::atomic::Ordering::SeqCst);
             // extract this, the contents does not matter
-            let mut kevent = kqueue_sys::kevent::new(0, kqueue_sys::EventFilter::EVFILT_EMPTY, kqueue_sys::EventFlag::empty(), kqueue_sys::FilterFlag::empty());
+            let mut kevent = kqueue_sys::kevent::new(0, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::empty(), kqueue_sys::FilterFlag::empty());
             let events_number = unsafe { kqueue_sys::kevent(kqueue, core::ptr::null(), 0, &mut kevent, 1, core::ptr::null()) };
             if events_number == -1 {
                 panic!("could not retrieve an event from kqueue");
@@ -60,6 +60,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                         self.connections.lock().expect("locking problem").insert(fd, (connection, state));
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
                     // do we wanna die here?
                     Err(e) => panic!("failed to accept: {}", e),
                 }
