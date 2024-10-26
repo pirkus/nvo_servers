@@ -2,10 +2,10 @@
 Not very opinionated servers 
 
 ## Build
-|Branch|OS     |Status                                                                                                                                                                                    |
-|------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|main  |Linux  |[![CircleCI](https://dl.circleci.com/status-badge/img/gh/pirkus/nvo_servers/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/pirkus/nvo_servers/tree/main)      |
-|main  |FreeBSD|[![Build Status](https://api.cirrus-ci.com/github/pirkus/nvo_servers.svg)](https://cirrus-ci.com/github/pirkus/nvo_servers)                                                               |
+|Branch|OS           |Status                                                                                                                                                                                    |
+|------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|main  |Linux        |[![CircleCI](https://dl.circleci.com/status-badge/img/gh/pirkus/nvo_servers/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/pirkus/nvo_servers/tree/main)      |
+|main  |macOS/FreeBSD|[![Build Status](https://api.cirrus-ci.com/github/pirkus/nvo_servers.svg)](https://cirrus-ci.com/github/pirkus/nvo_servers)                                                               |
 
 ## Examples
 For best example look into ./examples/async_unix.rs. 
