@@ -8,21 +8,21 @@ Not very opinionated servers
 |main  |macOS/FreeBSD|[![Build Status](https://api.cirrus-ci.com/github/pirkus/nvo_servers.svg)](https://cirrus-ci.com/github/pirkus/nvo_servers)                                                               |
 
 ## Examples
-For best example look into ./examples/async_unix.rs. 
+For best example look into `./examples/async_linux_macos.rs`. 
 
 This example starts a mongodb in a container (docker is required). It contains a POST handler that saves body into DB and a GET request that parses a path argument and loads data from the DB. 
 
-More examples are available in the ./examples directory
+More examples for more  are available in the `./examples` directory
 
 ### Cargo.toml
 ```toml
 [dependencies]
-nvo_servers = { git = "https://github.com/pirkus/nvo_servers", version = "v0.0.4" }
+nvo_servers = { git = "https://github.com/pirkus/nvo_servers", version = "v0.0.5" }
 ```
 ### Async I/O Http server
 Multithreaded. Runs same amount of threads as CPU core count.
 
-Supports FreeBSD and Linux. Adding support for macos and NetBSD should be trivial.
+Supports FreeBSD, Linux and macOS.
 
 Todo:
 1. Unwind panics for handlers -> Handle scenarios when handler_func throws
