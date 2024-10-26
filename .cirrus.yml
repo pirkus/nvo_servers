@@ -1,5 +1,5 @@
 task:
-  name: FreeBSD Test (stable)
+  name: FreeBSD Test
   freebsd_instance:
     image_family: freebsd-14-0
   env:
@@ -15,7 +15,7 @@ task:
   before_cache_script: rm -rf $HOME/.cargo/registry/index
 
 task:
-  name: hello
+  name: macos Test
   macos_instance:
     image: ghcr.io/cirruslabs/macos-runner:sonoma
   env:
