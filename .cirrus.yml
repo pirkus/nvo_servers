@@ -1,8 +1,7 @@
-freebsd_instance:
-  image_family: freebsd-14-0
-
 task:
   name: cargo test (stable)
+  freebsd_instance:
+    image_family: freebsd-14-0
   env:
     HOME: /tmp # cargo needs it
   install_script: pkg install -y rust
