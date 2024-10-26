@@ -1,9 +1,9 @@
 fn main() {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     unix_example::main()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix_example {
     use bson::doc;
     use env_logger::Env;

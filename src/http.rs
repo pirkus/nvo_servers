@@ -8,7 +8,7 @@ use handler::Handler;
 
 use crate::typemap::DepsMap;
 
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "freebsd", target_os = "macos"))]
 pub mod async_bsd_http_server;
 pub mod async_http_server;
 #[cfg(target_os = "linux")]
@@ -69,6 +69,7 @@ impl AsyncRequest {
             match self.body.lock().unwrap().read_exact(&mut buf) {
                 Ok(_) => break,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
                 Err(_e) => panic!("Do we want to panic here")
             };
         }
@@ -81,6 +82,7 @@ impl AsyncRequest {
             match self.body.lock().unwrap().read_exact(&mut buf) {
                 Ok(_) => break,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
                 Err(_e) => panic!("Do we want to panic here")
             };
         }

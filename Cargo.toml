@@ -10,13 +10,17 @@ serde = "1.0.210"
 log = "0.4.21"
 env_logger = "0.11.3"
 serde_json = "1.0"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 epoll = "4.3.3"
 [target.'cfg(target_os = "freebsd")'.dependencies]
 kqueue-sys = "1.0.4"
+[target.'cfg(target_os = "macos")'.dependencies]
+kqueue-sys = "1.0.4"
 
-[dev-dependencies]
-ureq = "2.9.6" # until we write our own!
+[dev-dependencies.reqwest]
+version = "0.12.8" # until we write our own!
+features = ["blocking"]
 
 [dev-dependencies.mongodb]
 version = "2.8.2"
@@ -26,7 +30,3 @@ features = ["async-std-runtime"]
 [dev-dependencies.testcontainers]
 version = "0.23.1"
 features = ["blocking"]
-
-[lib]
-name = "nvo_servers"
-path = "src/lib.rs"

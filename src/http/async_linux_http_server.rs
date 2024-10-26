@@ -52,6 +52,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                             self.connections.lock().expect("locking problem").insert(fd, (connection, state));
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                        Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
                         // do we wanna die here?
                         Err(e) => panic!("failed to accept: {}", e),
                     }

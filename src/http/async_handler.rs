@@ -24,6 +24,8 @@ impl AsyncHandler {
                 let mut buf = [0u8; 8192];
                 match connection.peek(&mut buf) {
                     Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
                     Err(e) => {
                         error!("Unpeekable stream. Error: {e}");
                         return Some((connection, ConnState::Flush));
@@ -42,6 +44,7 @@ impl AsyncHandler {
                         debug!("Read http req.");
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
                     Err(e) => panic!("{}", e), // TODO: probably don't wanna blow up here
                 };
 
@@ -61,7 +64,7 @@ impl AsyncHandler {
                         } else {
                             (x.trim().to_string(), "".to_string())
                         }
-                    }).collect::<HashMap<String,String>>();
+                    }).collect::<HashMap<String, String>>();
 
                 info!("http_req_size = {http_req_size}; ");
 
@@ -159,15 +162,15 @@ impl AsyncHandler {
 impl<T: Send + Sync + 'static, F: Send + 'static> AsyncHandlerFn for T
 where
     T: Fn(AsyncRequest) -> F,
-    F: Future<Output = Result<Response, String>>,
+    F: Future<Output=Result<Response, String>>,
 {
-    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>> {
+    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output=Result<Response, String>> + Send + 'static>> {
         Box::pin(self(args))
     }
 }
 
 pub trait AsyncHandlerFn: Send + Sync + 'static {
-    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>>;
+    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output=Result<Response, String>> + Send + 'static>>;
 }
 
 #[cfg(test)]
@@ -258,9 +261,9 @@ mod tests {
                     HashMap::from([("id".to_string(), "1".to_string())]),
                     Arc::new(DepsMap::default()),
                     HashMap::new(),
-                    Arc::new(Mutex::new(conn))
+                    Arc::new(Mutex::new(conn)),
                 ),
-                0
+                0,
             )
         );
 

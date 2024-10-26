@@ -20,13 +20,7 @@ fn get_works() {
 
     common::wait_for_server_to_start(server);
 
-    let body: String = ureq::get(format!("http://localhost:{port}/status").as_str())
-        .set("Example-Header", "header value")
-        .call()
-        .unwrap()
-        .into_string()
-        .unwrap();
-
+    let resp = reqwest::blocking::get(format!("http://localhost:{port}/status").as_str()).unwrap().text().unwrap();
     let resp: Value = serde_json::from_str(body.as_str()).unwrap();
     assert_eq!(resp["status"], "ok");
 }
