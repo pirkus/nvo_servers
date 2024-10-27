@@ -12,7 +12,7 @@ For best example look into `./examples/async_linux_macos.rs`.
 
 This example starts a mongodb in a container (docker is required). It contains a POST handler that saves body into DB and a GET request that parses a path argument and loads data from the DB. 
 
-More examples for more  are available in the `./examples` directory
+More examples for more OSes are available in the `./examples` directory
 
 ### Cargo.toml
 ```toml
