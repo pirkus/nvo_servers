@@ -60,11 +60,12 @@ impl AsyncHandler {
                     .map(|x| {
                         if x.contains(':') {
                             let split = x.split_once(':').unwrap();
-                            (split.0.trim().to_string(), split.1.trim().to_string())
+                            (split.0.trim().to_string().to_lowercase(), split.1.trim().to_string().to_lowercase())
                         } else {
                             (x.trim().to_string(), "".to_string())
                         }
-                    }).collect::<HashMap<String, String>>();
+                    })
+                    .collect::<HashMap<String, String>>();
 
                 info!("http_req_size = {http_req_size}; ");
 
@@ -86,7 +87,14 @@ impl AsyncHandler {
                     }
                     Some(endpoint) => {
                         debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
-                        AsyncRequest::create(path, endpoint.clone(), helpers::extract_path_params(&endpoint.path, path), deps_map, headers.clone(), connection.try_clone().unwrap())
+                        AsyncRequest::create(
+                            path,
+                            endpoint.clone(),
+                            helpers::extract_path_params(&endpoint.path, path),
+                            deps_map,
+                            headers.clone(),
+                            connection.try_clone().unwrap(),
+                        )
                     }
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
@@ -162,15 +170,15 @@ impl AsyncHandler {
 impl<T: Send + Sync + 'static, F: Send + 'static> AsyncHandlerFn for T
 where
     T: Fn(AsyncRequest) -> F,
-    F: Future<Output=Result<Response, String>>,
+    F: Future<Output = Result<Response, String>>,
 {
-    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output=Result<Response, String>> + Send + 'static>> {
+    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>> {
         Box::pin(self(args))
     }
 }
 
 pub trait AsyncHandlerFn: Send + Sync + 'static {
-    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output=Result<Response, String>> + Send + 'static>>;
+    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>>;
 }
 
 #[cfg(test)]
