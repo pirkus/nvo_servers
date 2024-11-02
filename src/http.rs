@@ -1,10 +1,14 @@
-use core::{fmt};
+use core::fmt;
 use std::{
-    collections::HashMap, io::{self, Read, Write}, net::TcpStream, sync::{Arc, Mutex}
+    collections::HashMap,
+    io::{self, Read, Write},
+    net::TcpStream,
+    sync::{Arc, Mutex},
 };
 
 use async_handler::AsyncHandler;
 use handler::Handler;
+use log::debug;
 
 use crate::typemap::DepsMap;
 
@@ -62,31 +66,35 @@ impl AsyncRequest {
         }
     }
 
-    pub async fn body(&self) -> String {
-        // throw away \r\n\r\n which 4 chars 
+    pub async fn body(&self) -> Result<String, Error> {
+        // throw away \r\n\r\n which 4 chars
         let mut buf = vec![0u8; 4];
         loop {
             match self.body.lock().unwrap().read_exact(&mut buf) {
                 Ok(_) => break,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                Err(_e) => panic!("Do we want to panic here")
+                Err(_e) => panic!("Do we want to panic here"),
             };
         }
 
         // TODO: header names to be case insensitive and
         // TODO: should we handle cases where content length is uknown? check RFC
-        let content_length = self.headers.get("Content-Length").unwrap().parse::<usize>().unwrap();
-        let mut buf = vec![0u8; content_length];
-        loop {
-            match self.body.lock().unwrap().read_exact(&mut buf) {
-                Ok(_) => break,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                Err(_e) => panic!("Do we want to panic here")
-            };
+        if let Some(content_length) = self.headers.get("Content-Length") {
+            debug!("Request content-length: {content_length}");
+            let mut buf = vec![0u8; content_length.clone().parse::<usize>().unwrap()];
+            loop {
+                match self.body.lock().unwrap().read_exact(&mut buf) {
+                    Ok(_) => break,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
+                    Err(_e) => panic!("Do we want to panic here"),
+                };
+            }
+            Ok(String::from_utf8(buf).unwrap())
+        } else {
+            Err(Error::new(411, "Missing Content-Length header"))
         }
-        String::from_utf8(buf).unwrap()
     }
 }
 
@@ -141,3 +149,29 @@ impl TryClone for TcpStream {
 }
 
 impl ConnStream for TcpStream {}
+
+#[derive(Clone, Debug)]
+pub struct Error {
+    pub status_code: u16,
+    pub title: String,
+    pub desc: String,
+}
+
+impl Error {
+    fn new(status_code: u16, title: &str) -> Error {
+        Error {
+            status_code,
+            title: title.to_string(),
+            desc: "".to_string(),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn new_with_desc(status_code: u16, title: &str, desc: &str) -> Error {
+        Error {
+            status_code,
+            title: title.to_string(),
+            desc: desc.to_string(),
+        }
+    }
+}

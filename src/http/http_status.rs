@@ -14,6 +14,7 @@ impl HttpStatus {
             403 => "Forbidden".to_string(),
             404 => "Not Found".to_string(),
             409 => "Conflict".to_string(),
+            411 => "Length Required".to_string(),
             415 => "Unsupported Media Type".to_string(),
             418 => "I'm a teapot".to_string(),
             500 => "Internal Server Error".to_string(),

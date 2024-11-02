@@ -47,7 +47,7 @@ mod unix_example {
     async fn post_handler(req: AsyncRequest) -> Result<Response, String> {
         let mongo = req.deps.get::<Client>().unwrap();
         let my_coll: Collection<Restaurant> = mongo.database("gym-log").collection("restaurants");
-        let buf = req.body().await;
+        let buf = req.body().await.unwrap();
         let doc = Restaurant { name: buf.clone() };
 
         my_coll.insert_one(&doc, None).await.unwrap();
