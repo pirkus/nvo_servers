@@ -80,7 +80,7 @@ impl AsyncRequest {
 
         // TODO: header names to be case insensitive and
         // TODO: should we handle cases where content length is uknown? check RFC
-        if let Some(content_length) = self.headers.get("Content-Length") {
+        if let Some(content_length) = self.headers.get("content-length") {
             debug!("Request content-length: {content_length}");
             let mut buf = vec![0u8; content_length.clone().parse::<usize>().unwrap()];
             loop {
