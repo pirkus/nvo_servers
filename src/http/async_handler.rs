@@ -67,7 +67,7 @@ impl AsyncHandler {
                     })
                     .collect::<HashMap<String, String>>();
 
-                info!("http_req_size = {http_req_size}; ");
+                debug!("http_req_size = {http_req_size}; ");
 
                 let endpoint = endpoints.iter().find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
 
