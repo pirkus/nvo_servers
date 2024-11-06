@@ -2,7 +2,7 @@ use crate::typemap::DepsMap;
 
 use super::ConnStream;
 use super::{helpers, response::Response, AsyncRequest, ConnState};
-use log::{debug, error, info};
+use log::{debug, error};
 use std::collections::{HashMap, HashSet};
 use std::str::from_utf8;
 use std::sync::Arc;
@@ -115,6 +115,7 @@ impl AsyncHandler {
                         }
                         Ok(n) => written += n,
                         Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Write(req.clone(), written))),
+                        Err(ref err) if err.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Write(req.clone(), written))),
                         // Is this needed?
                         // Err(ref err) if err.kind() == Interrupted => {
                         //     return handle_connection_event(registry, connection, event, conn_state)

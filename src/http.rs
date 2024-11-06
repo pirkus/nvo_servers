@@ -150,7 +150,7 @@ impl TryClone for TcpStream {
 
 impl ConnStream for TcpStream {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     pub status_code: u16,
     pub title: String,
@@ -158,7 +158,7 @@ pub struct Error {
 }
 
 impl Error {
-    fn new(status_code: u16, title: &str) -> Error {
+    pub fn new(status_code: u16, title: &str) -> Error {
         Error {
             status_code,
             title: title.to_string(),
@@ -167,7 +167,7 @@ impl Error {
     }
 
     #[allow(dead_code)]
-    fn new_with_desc(status_code: u16, title: &str, desc: &str) -> Error {
+    pub fn new_with_desc(status_code: u16, title: &str, desc: &str) -> Error {
         Error {
             status_code,
             title: title.to_string(),

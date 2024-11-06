@@ -24,8 +24,9 @@ where
 {
     type Output = Result<F::Output, Box<dyn Any + Send>>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        match catch_unwind(AssertUnwindSafe(|| self.future.as_mut().poll(cx))) {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        let self_mut = self.get_mut();
+        match catch_unwind(AssertUnwindSafe(|| self_mut.future.as_mut().poll(cx))) {
             Ok(poll) => match poll {
                 std::task::Poll::Ready(ok) => std::task::Poll::Ready(Ok(ok)),
                 std::task::Poll::Pending => std::task::Poll::Pending,
@@ -43,7 +44,7 @@ mod tests {
     };
 
     #[test]
-    fn queue_with_result_does_not_block_and_return_a_result() {
+    fn can_finish_execution() {
         let workers = Workers::new(1);
         let a = utils::poor_mans_random();
         let b = utils::poor_mans_random();
@@ -52,6 +53,15 @@ mod tests {
         let res = workers.queue_with_result(f);
 
         assert_eq!(a / b, res.unwrap().get().unwrap());
-        workers.poison_all()
+        workers.poison_all();
+    }
+
+    #[test]
+    fn can_catch_a_panic() {
+        let workers = Workers::new(1);
+        let f = CatchUnwind::new(async move { panic!("panic") });
+
+        let res = workers.queue_with_result(f).unwrap().get().unwrap_err().downcast::<&str>().unwrap();
+        assert_eq!(*res, "panic");
     }
 }

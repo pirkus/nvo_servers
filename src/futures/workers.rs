@@ -34,13 +34,13 @@ impl Workers {
         self.sender.send(Arc::new(ChannelMsg::Task(task)))
     }
 
-    pub fn queue_with_result<F>(&self, future: F) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<Task>>>
+    pub fn queue_with_result<F>(&self, future: F) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<ChannelMsg>>>
     where
         F: Future + Send + 'static,
         F::Output: Send,
     {
-        let blocking_val: Arc<ResultHandle<F::Output>> = Arc::new(ResultHandle::new());
-        let blocking_val_clone: Arc<ResultHandle<F::Output>> = blocking_val.clone();
+        let blocking_val: ShareableResultHandle<F::Output> = Arc::new(ResultHandle::new());
+        let blocking_val_clone: ShareableResultHandle<F::Output> = blocking_val.clone();
         let inner_future = async move {
             let outer_future_res = future.await;
             blocking_val.set(outer_future_res);
@@ -49,9 +49,11 @@ impl Workers {
             future: Mutex::new(Some(Box::pin(inner_future))),
             sender: self.sender.clone(),
         };
-        self.sender.send(Arc::new(ChannelMsg::Task(task))).unwrap();
 
-        Ok(blocking_val_clone)
+        match self.sender.send(Arc::new(ChannelMsg::Task(task))) {
+            Ok(_) => Ok(blocking_val_clone),
+            Err(z) => Err(z),
+        }
     }
 
     pub fn poison_all(self) {
@@ -104,7 +106,7 @@ mod tests {
         let res = workers.queue_with_result(f);
 
         ORDER.lock().unwrap().push(1);
-        IS_MODIFIED.swap(true, Ordering::SeqCst); // comment to 💀-🔐
+        IS_MODIFIED.swap(true, Ordering::SeqCst); // comment out to 💀-🔐
         assert_eq!(res.unwrap().get(), a / b);
         assert_eq!(ORDER.lock().unwrap().clone(), [1, 2].to_vec());
 
