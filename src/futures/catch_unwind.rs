@@ -1,7 +1,7 @@
 use std::{
     any::Any,
     future::Future,
-    panic::{catch_unwind, AssertUnwindSafe, UnwindSafe},
+    panic::{catch_unwind, AssertUnwindSafe},
     pin::Pin,
 };
 
@@ -11,16 +11,16 @@ pub struct CatchUnwind<F> {
 
 impl<F> CatchUnwind<F>
 where
-    F: Future + UnwindSafe,
+    F: Future,
 {
-    pub(super) fn new(future: F) -> Self {
+    pub fn new(future: F) -> Self {
         Self { future: Box::pin(future) }
     }
 }
 
 impl<F> Future for CatchUnwind<F>
 where
-    F: Future + UnwindSafe,
+    F: Future,
 {
     type Output = Result<F::Output, Box<dyn Any + Send>>;
 
