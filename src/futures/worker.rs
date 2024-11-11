@@ -29,12 +29,12 @@ impl Worker {
     pub(crate) fn new(name: String, recv: Arc<Mutex<Receiver<Arc<ChannelMsg>>>>) -> Worker {
         let worker_name = name.clone();
         let thread_handle = thread::spawn(move || loop {
-            match recv.lock().unwrap().recv() {
+            match recv.lock().expect("poisoned lock").recv() {
                 Ok(task_ptr) => {
                     debug!("Executing job. Worker name: {worker_name}");
                     match task_ptr.deref() {
                         ChannelMsg::Task(task) => {
-                            let mut future_mutex = task.future.lock().unwrap();
+                            let mut future_mutex = task.future.lock().expect("poisoned lock");
                             if let Some(mut future) = future_mutex.take() {
                                 let waker = Waker::from(task_ptr.clone());
                                 let context = &mut Context::from_waker(&waker);

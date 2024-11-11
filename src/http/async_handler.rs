@@ -2,7 +2,8 @@ use crate::typemap::DepsMap;
 
 use super::ConnStream;
 use super::{helpers, response::Response, AsyncRequest, ConnState};
-use log::{debug, error, info};
+use crate::futures::catch_unwind::CatchUnwind;
+use log::{debug, error};
 use std::collections::{HashMap, HashSet};
 use std::str::from_utf8;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ impl AsyncHandler {
                         return Some((connection, ConnState::Flush));
                     }
                 }
-                let http_req_size = match from_utf8(&buf).unwrap().find("\r\n\r\n") {
+                let http_req_size = match from_utf8(&buf).expect("string").find("\r\n\r\n") {
                     Some(n) => n,
                     None => {
                         error!("Received not an HTTP request.");
@@ -67,7 +68,7 @@ impl AsyncHandler {
                     })
                     .collect::<HashMap<String, String>>();
 
-                info!("http_req_size = {http_req_size}; ");
+                debug!("http_req_size = {http_req_size}; ");
 
                 let endpoint = endpoints.iter().find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
 
@@ -100,7 +101,21 @@ impl AsyncHandler {
                 Some((connection, ConnState::Write(req_handler, 0)))
             }
             ConnState::Write(req, written_bytes) => {
-                let res = (req.handler.func).call(req.clone()).await.unwrap(); // TODO: catch panics
+                let res = CatchUnwind::new(req.handler.func.call(req.clone()))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Ok(if e.is::<&str>() {
+                            let panic_msg = *e.downcast::<&str>().expect("&str");
+                            Response::create(500, format!("Internal server error\n:{panic_msg}"))
+                        } else if e.is::<String>() {
+                            let panic_msg = *e.downcast::<String>().expect("String");
+                            Response::create(500, format!("Internal server error\n:{panic_msg}"))
+                        } else {
+                            Response::create(500, "Cannot interpret error.".to_string())
+                            // [FL] TODO: custom error handlers
+                        })
+                    })
+                    .unwrap();
                 let status_line = res.get_status_line();
                 let contents = res.response_body;
                 let length = contents.len();
@@ -115,10 +130,7 @@ impl AsyncHandler {
                         }
                         Ok(n) => written += n,
                         Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Write(req.clone(), written))),
-                        // Is this needed?
-                        // Err(ref err) if err.kind() == Interrupted => {
-                        //     return handle_connection_event(registry, connection, event, conn_state)
-                        // }
+                        Err(ref err) if err.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Write(req.clone(), written))),
                         Err(err) => panic!("{}", err), // I guess we don't wanna die here ?
                     }
                 }
@@ -188,7 +200,7 @@ mod tests {
     use crate::http::response::Response;
     use crate::http::{AsyncRequest, ConnState, ConnStream, Peek, TryClone};
     use crate::typemap::DepsMap;
-    use env_logger::Env;
+
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
     use std::{
@@ -237,29 +249,30 @@ mod tests {
 
     impl ConnStream for FakeConn {}
 
+    impl FakeConn {
+        fn new(read_data: &str) -> Self {
+            FakeConn {
+                read_data: read_data.as_bytes().to_vec(),
+                write_data: Vec::default(),
+            }
+        }
+    }
+
     #[test]
     fn async_can_read_and_match_the_right_handler() {
         async fn ugh_handler(x: AsyncRequest) -> Result<Response, String> {
             Ok(Response::create(200, x.path))
         }
 
-        env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
-
         let workers = Workers::new(1);
         let handler = Arc::new(AsyncHandler::new("GET", "/some/:id", ugh_handler));
-        let http_req = b"GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
-        let mut contents = vec![0u8; http_req.len()];
-        contents[..http_req.len()].clone_from_slice(http_req);
-        let conn = FakeConn {
-            read_data: contents,
-            write_data: Vec::new(),
-        };
+        let conn = FakeConn::new("GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n");
 
         let handler_clj = handler.clone();
         let conn_clj = conn.clone();
         let result =
             workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
-        let (_, conn_state) = result.unwrap().get().unwrap();
+        let (_conn, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,
             ConnState::Write(
@@ -281,34 +294,39 @@ mod tests {
     //TODO [FL]: add tests for all stages
 
     #[test]
-    fn func_can_be_called() {
-        async fn foo(x: AsyncRequest) -> Result<Response, String> {
-            Ok(Response::create(200, x.path))
+    fn write_can_catch_a_panic() {
+        async fn ugh_handler(_: AsyncRequest) -> Result<Response, String> {
+            panic!("panic")
         }
 
-        let http_req = b"GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
-        let mut contents = vec![0u8; http_req.len()];
-        contents[..http_req.len()].clone_from_slice(http_req);
-        let conn = FakeConn {
-            read_data: contents,
-            write_data: Vec::new(),
-        };
         let workers = Workers::new(1);
-        let some_path = "some_path";
-        let conn_clj = conn.try_clone().unwrap();
-        let res = workers
-            .queue_with_result(async move {
-                let async_handler = Arc::new(AsyncHandler::new("some method", "some path", foo));
-                async_handler
-                    .func
-                    .call(AsyncRequest::create(some_path, async_handler.clone(), HashMap::new(), Arc::new(DepsMap::default()), HashMap::new(), conn_clj).clone())
-                    .await
-            })
-            .unwrap()
-            .get();
+        let handler = Arc::new(AsyncHandler::new("GET", "/some/:id", ugh_handler));
+        let conn = FakeConn::new("GET /some/1 HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n");
 
-        assert_eq!(res.unwrap().status_code, 200);
+        let handler_clj = handler.clone();
+        let conn_clj = conn.clone();
+        let write_state = ConnState::Write(
+            AsyncRequest::create(
+                "/some/1",
+                handler.clone(),
+                HashMap::from([("id".to_string(), "1".to_string())]),
+                Arc::new(DepsMap::default()),
+                HashMap::new(),
+                Arc::new(Mutex::new(conn)),
+            ),
+            0,
+        );
 
-        workers.poison_all()
+        let result = workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &write_state, HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+        let (conn, _conn_state) = result.unwrap().get().unwrap();
+        assert_eq!(
+            String::from_utf8(conn.write_data).unwrap(),
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 28\r\n\r\nInternal server error\n:panic"
+        );
     }
+
+    // #[test]
+    // fn read_can_handle_req_larger_than_8192() {
+    //     todo!()
+    // }
 }
