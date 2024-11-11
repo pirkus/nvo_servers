@@ -2,14 +2,12 @@ use crate::typemap::DepsMap;
 
 use super::ConnStream;
 use super::{helpers, response::Response, AsyncRequest, ConnState};
+use crate::futures::catch_unwind::CatchUnwind;
 use log::{debug, error};
 use std::collections::{HashMap, HashSet};
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
-use std::any::Any;
-use std::panic::UnwindSafe;
-use crate::futures::catch_unwind::CatchUnwind;
 
 pub struct AsyncHandler {
     pub method: String,
@@ -103,18 +101,21 @@ impl AsyncHandler {
                 Some((connection, ConnState::Write(req_handler, 0)))
             }
             ConnState::Write(req, written_bytes) => {
-                let res = CatchUnwind::new(req.handler.func.call(req.clone())).await.unwrap_or_else(|e| {
-                    Ok(if e.is::<&str>() {
-                        let panic_msg = *e.downcast::<&str>().expect("&str");
-                        Response::create(500, format!("Internal server error\n:{panic_msg}"))
-                    } else if e.is::<String>() {
-                        let panic_msg = *e.downcast::<String>().expect("String");
-                        Response::create(500, format!("Internal server error\n:{panic_msg}"))
-                    } else {
-                        let type_id = e.type_id();
-                        Response::create(500, format!("Cannot interpret error, add handler for typeId: {type_id:?}")) // [FL] TODO: custom error handlers
+                let res = CatchUnwind::new(req.handler.func.call(req.clone()))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Ok(if e.is::<&str>() {
+                            let panic_msg = *e.downcast::<&str>().expect("&str");
+                            Response::create(500, format!("Internal server error\n:{panic_msg}"))
+                        } else if e.is::<String>() {
+                            let panic_msg = *e.downcast::<String>().expect("String");
+                            Response::create(500, format!("Internal server error\n:{panic_msg}"))
+                        } else {
+                            Response::create(500, "Cannot interpret error.".to_string())
+                            // [FL] TODO: custom error handlers
+                        })
                     })
-                }).unwrap();
+                    .unwrap();
                 let status_line = res.get_status_line();
                 let contents = res.response_body;
                 let length = contents.len();
@@ -130,10 +131,6 @@ impl AsyncHandler {
                         Ok(n) => written += n,
                         Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Write(req.clone(), written))),
                         Err(ref err) if err.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Write(req.clone(), written))),
-                        // Is this needed?
-                        // Err(ref err) if err.kind() == Interrupted => {
-                        //     return handle_connection_event(registry, connection, event, conn_state)
-                        // }
                         Err(err) => panic!("{}", err), // I guess we don't wanna die here ?
                     }
                 }
@@ -182,18 +179,18 @@ impl AsyncHandler {
     }
 }
 
-impl<T: Send + Sync + UnwindSafe + 'static, F: Send + 'static> AsyncHandlerFn for T
+impl<T: Send + Sync + 'static, F: Send + 'static> AsyncHandlerFn for T
 where
     T: Fn(AsyncRequest) -> F,
-    F: Future<Output=Result<Response, String>>,
+    F: Future<Output = Result<Response, String>>,
 {
-    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output=Result<Response, String>> + Send + 'static>> {
+    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>> {
         Box::pin(self(args))
     }
 }
 
 pub trait AsyncHandlerFn: Send + Sync + 'static {
-    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output=Result<Response, String>> + Send + 'static>>;
+    fn call(&self, args: AsyncRequest) -> Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'static>>;
 }
 
 #[cfg(test)]
@@ -203,7 +200,7 @@ mod tests {
     use crate::http::response::Response;
     use crate::http::{AsyncRequest, ConnState, ConnStream, Peek, TryClone};
     use crate::typemap::DepsMap;
-    use env_logger::Env;
+
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
     use std::{
@@ -256,7 +253,7 @@ mod tests {
         fn new(read_data: &str) -> Self {
             FakeConn {
                 read_data: read_data.as_bytes().to_vec(),
-                write_data: Vec::default()
+                write_data: Vec::default(),
             }
         }
     }
@@ -320,10 +317,12 @@ mod tests {
             0,
         );
 
-        let result =
-            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &write_state, HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+        let result = workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &write_state, HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
         let (conn, _conn_state) = result.unwrap().get().unwrap();
-        assert_eq!(String::from_utf8(conn.write_data).unwrap(), "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 28\r\n\r\nInternal server error\n:panic");
+        assert_eq!(
+            String::from_utf8(conn.write_data).unwrap(),
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 28\r\n\r\nInternal server error\n:panic"
+        );
     }
 
     // #[test]
