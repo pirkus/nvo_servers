@@ -17,7 +17,7 @@ More examples for more OSes are available in the `./examples` directory
 ### Cargo.toml
 ```toml
 [dependencies]
-nvo_servers = { git = "https://github.com/pirkus/nvo_servers", tag = "v0.0.6" }
+nvo_servers = { git = "https://github.com/pirkus/nvo_servers", tag = "v0.0.9" }
 ```
 ### Async I/O Http server
 Multithreaded. Runs same amount of threads as CPU core count.
