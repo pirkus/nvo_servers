@@ -25,8 +25,9 @@ Multithreaded. Runs same amount of threads as CPU core count.
 Supports FreeBSD, Linux and macOS.
 
 Todo:
-1. Unwind panics for handlers -> Handle scenarios when handler_func throws
-2. And much more ...
+1. Code refactorign and proper testing
+2. Custom headers
+3. And much more...
 ```rust
 pub fn main() {
   async fn status_handler(_: AsyncRequest) -> Result<Response, String> {
@@ -45,13 +46,13 @@ pub fn main() {
 }
 ```
 ### (Not working ATM) Blocking I/O Http server 
-Multithreaded. Runs same amount of threads as CPU core count.
+~~Multithreaded. Runs same amount of threads as CPU core count.~~
 
-Todo:
-1. Handle scenarios when handler_func throws
-2. Graceful shutdown
-3. Query params matching
-5. And much more ...
+~~Todo:~~
+1. ~~Handle scenarios when handler_func throws~~
+2. ~~Graceful shutdown~~
+3. ~~Query params matching~~
+5. ~~And much more ...~~
 ```rust
 fn main() {
   //...
@@ -60,7 +61,7 @@ fn main() {
 }
 ```
 
-#### To send requests for testing one can use:
+### To send requests for testing one can use:
 ```sh
 ab -k -n 1000000 -c 10 localhost:8090/status
 ```
