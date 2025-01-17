@@ -19,11 +19,9 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
 
         let epoll = epoll::create(false).unwrap_or_else(|e| log_panic!("Failed to create epoll, reason:\n{reason}", reason = e.to_string()));
         // https://stackoverflow.com/questions/31357215/is-it-ok-to-share-the-same-epoll-file-descriptor-among-threads
-        // To add multithreading: EPOLLIN | EPOLLET
         let event = Event::new(Events::EPOLLIN | Events::EPOLLOUT, listener.as_raw_fd() as _);
         epoll::ctl(epoll, EPOLL_CTL_ADD, listener.as_raw_fd(), event).unwrap_or_else(|e| panic!("Failed to register interested in epoll fd, reason:\n{e}"));
 
-        // To add multithreading: spawn a new thread around here
         // events arr cannot be shared between threads, would be hard in rust anyway :D
         loop {
             if self.shutdown_requested.load(Ordering::SeqCst) {
