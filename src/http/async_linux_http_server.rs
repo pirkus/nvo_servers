@@ -45,7 +45,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                             let event = Event::new(Events::EPOLLIN | Events::EPOLLOUT, fd as _);
                             epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event).expect("Failed to register interest in connection events.");
 
-                            let state = ConnState::Read(Vec::new(), 0);
+                            let state = ConnState::Read(Vec::new());
 
                             self.connections.lock().expect("locking problem").insert(fd, (connection, state));
                         }

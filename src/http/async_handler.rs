@@ -21,12 +21,12 @@ impl AsyncHandler {
         S: ConnStream,
     {
         match conn_state {
-            ConnState::Read(req, read_bytes) => {
+            ConnState::Read(req) => {
                 let mut buf = [0u8; 8192];
                 match connection.peek(&mut buf) {
                     Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
-                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone()))),
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone()))),
                     Err(e) => {
                         error!("Unpeekable stream. Error: {e}");
                         return Some((connection, ConnState::Flush));
@@ -44,8 +44,8 @@ impl AsyncHandler {
                     Ok(()) => {
                         debug!("Read http req.");
                     }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
-                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone(), *read_bytes))),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone()))),
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone()))),
                     Err(e) => panic!("{}", e), // TODO: probably don't wanna blow up here
                 };
 
@@ -271,7 +271,7 @@ mod tests {
         let handler_clj = handler.clone();
         let conn_clj = conn.clone();
         let result =
-            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new(), 0), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new()), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
         let (_conn, conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             conn_state,

@@ -112,7 +112,7 @@ impl PartialEq for AsyncRequest {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum ConnState {
-    Read(Vec<u8>, usize),
+    Read(Vec<u8>),
     Write(AsyncRequest, usize),
     Flush,
 }
@@ -120,7 +120,7 @@ pub enum ConnState {
 impl fmt::Display for ConnState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ConnState::Read(_, _) => write!(f, "Read"),
+            ConnState::Read(_) => write!(f, "Read"),
             ConnState::Write(_, _) => write!(f, "Write"),
             ConnState::Flush => write!(f, "Flush"),
         }
