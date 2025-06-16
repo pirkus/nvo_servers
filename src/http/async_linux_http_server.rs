@@ -18,11 +18,8 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
             .unwrap_or_else(|e| log_panic!("Failed to set listener to nonblocking mode, reason:\n{reason}", reason = e.to_string()));
 
         let epoll = epoll::create(false).unwrap_or_else(|e| log_panic!("Failed to create epoll, reason:\n{reason}", reason = e.to_string()));
-        // https://stackoverflow.com/questions/31357215/is-it-ok-to-share-the-same-epoll-file-descriptor-among-threads
-        let event = Event::new(Events::EPOLLIN | Events::EPOLLOUT, listener.as_raw_fd() as _);
-        epoll::ctl(epoll, EPOLL_CTL_ADD, listener.as_raw_fd(), event).unwrap_or_else(|e| panic!("Failed to register interested in epoll fd, reason:\n{e}"));
+        add_event(epoll, listener.as_raw_fd(), Events::EPOLLIN | Events::EPOLLOUT);
 
-        // events arr cannot be shared between threads, would be hard in rust anyway :D
         loop {
             if self.shutdown_requested.load(Ordering::SeqCst) {
                 return;
@@ -30,7 +27,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
             self.started.store(true, std::sync::atomic::Ordering::SeqCst);
 
             let mut events = [Event::new(Events::empty(), 0); 1024];
-            let num_events = epoll::wait(epoll, -1 /* block forever */, &mut events).unwrap_or_else(|e| log_panic!("IO error, reason:\n{reason}", reason = e.to_string()));
+            let num_events = epoll::wait(epoll, -1, &mut events).unwrap_or_else(|e| log_panic!("IO error, reason:\n{reason}", reason = e.to_string()));
 
             for event in &events[..num_events] {
                 let fd = event.data as i32;
@@ -39,26 +36,20 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                     match listener.accept() {
                         Ok((connection, _)) => {
                             connection.set_nonblocking(true).expect("Failed to set connection to nonblocking mode.");
-
                             let fd = connection.as_raw_fd();
-
-                            let event = Event::new(Events::EPOLLIN | Events::EPOLLOUT, fd as _);
-                            epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event).expect("Failed to register interest in connection events.");
-
+                            add_event(epoll, fd, Events::EPOLLIN | Events::EPOLLOUT);
                             let state = ConnState::Read(Vec::new());
-
                             self.connections.lock().expect("locking problem").insert(fd, (connection, state));
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                         Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                        // do we wanna die here?
                         Err(e) => panic!("failed to accept: {}", e),
                     }
                 } else {
                     let conns = self.connections.clone();
-
                     let option = conns.lock().expect("Poisoned").remove(&fd);
                     let deps_map = self.deps_map.clone();
+
                     if let Some((conn, conn_status)) = option {
                         let endpoint = self.endpoints.clone();
                         self.workers
@@ -86,4 +77,9 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
     fn builder() -> AsyncHttpServerBuilder {
         AsyncHttpServerBuilder::default()
     }
+}
+
+fn add_event(epoll: i32, fd: i32, events: Events) {
+    let event = Event::new(events, fd as _);
+    epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event).unwrap_or_else(|e| panic!("Failed to register interested in epoll fd, reason:\n{e}"));
 }

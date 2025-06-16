@@ -27,24 +27,29 @@ pub struct AsyncHttpServer {
 }
 
 pub struct AsyncHttpServerBuilder {
-    pub listen_addr: String,
-    pub handlers: HashSet<AsyncHandler>,
-    pub workers_number: usize,
-    pub deps_map: DepsMap,
+    listen_addr: String,
+    handlers: HashSet<AsyncHandler>,
+    workers_number: usize,
+    deps_map: DepsMap,
 }
 
 impl AsyncHttpServerBuilder {
-    pub fn with_addr(mut self, addr: &str) -> AsyncHttpServerBuilder {
-        if addr.contains(':') {
-            self.listen_addr = addr.to_string();
-        } else {
-            let mut split = addr.split(':');
-            self.listen_addr = format!("{addr}:{port}", port = split.nth(1).unwrap());
+    pub fn new() -> AsyncHttpServerBuilder {
+        let thread_count = thread::available_parallelism().unwrap().get();
+        Self {
+            listen_addr: "0.0.0.0:9000".to_string(),
+            handlers: Default::default(),
+            workers_number: thread_count,
+            deps_map: DepsMap::default(),
         }
+    }
+
+    pub fn with_addr(mut self, addr: &str) -> Self {
+        self.listen_addr = addr.to_string();
         self
     }
 
-    pub fn with_port(mut self, port: usize) -> AsyncHttpServerBuilder {
+    pub fn with_port(mut self, port: usize) -> Self {
         if port > 65536 {
             panic!("Port cannot be larger than 65535. Was: {port}")
         }
@@ -53,24 +58,31 @@ impl AsyncHttpServerBuilder {
         self
     }
 
-    pub fn with_handlers(mut self, handlers: HashSet<AsyncHandler>) -> AsyncHttpServerBuilder {
+    pub fn with_handler(mut self, handler: AsyncHandler) -> Self {
+        self.handlers.insert(handler);
+        self
+    }
+
+    pub fn with_handlers(mut self, handlers: HashSet<AsyncHandler>) -> Self {
         handlers.into_iter().for_each(|ele| {
             self.handlers.insert(ele);
         });
         self
     }
 
-    pub fn with_dep(mut self, dep: impl Any + Sync + Send) -> AsyncHttpServerBuilder {
+    pub fn with_dep<T: Any + Send + Sync>(mut self, dep: T) -> Self {
         self.deps_map.insert(dep);
         self
     }
 
-    pub fn with_deps(mut self, deps: Vec<impl Any + Sync + Send>) -> AsyncHttpServerBuilder {
-        deps.into_iter().for_each(|d| self.deps_map.insert(d));
+    pub fn with_deps(mut self, deps: Vec<Box<dyn Any + Sync + Send>>) -> Self {
+        deps.into_iter().for_each(|d| {
+            self.deps_map.insert_boxed(d);
+        });
         self
     }
 
-    pub fn with_custom_num_workers(mut self, num_workers: usize) -> AsyncHttpServerBuilder {
+    pub fn with_custom_num_workers(mut self, num_workers: usize) -> Self {
         self.workers_number = num_workers;
         self
     }
@@ -90,12 +102,6 @@ impl AsyncHttpServerBuilder {
 
 impl Default for AsyncHttpServerBuilder {
     fn default() -> Self {
-        let thread_count = thread::available_parallelism().unwrap().get();
-        Self {
-            listen_addr: "0.0.0.0:9000".to_string(),
-            handlers: Default::default(),
-            workers_number: thread_count,
-            deps_map: DepsMap::default(),
-        }
+        Self::new()
     }
 }

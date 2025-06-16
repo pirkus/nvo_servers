@@ -20,11 +20,11 @@ impl Handler {
         format!("{}-{}", path, method)
     }
 
-    pub fn handle<S>(&self, mut stream: S, path: String) -> Result<u16, String>
+    pub fn handle<S>(&self, stream: &mut S, path: String) -> Result<u16, String>
     where
         S: Write + Read,
     {
-        let request = Request::create(path.as_str(), Self::not_found("fix_me"), HashMap::new());
+        let request = Request::create(path.as_str(), Self::not_found("fix_me"), HashMap::new(), "".to_string());
         let res = (self.handler_func)(&request)?; // TODO[FL]: return 500 Internal somehow
         let status_code = res.status_code;
         let status_line = res.get_status_line();

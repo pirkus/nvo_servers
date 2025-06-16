@@ -1,5 +1,3 @@
-/* TODO: FIX ME functionality has not caught up recently and is NOT on par with Async servers
-
 use crate::futures::workers::Workers;
 use crate::http::handler::Handler;
 use crate::log_panic;
@@ -54,7 +52,11 @@ impl HttpServerTrt for HttpServer {
                 log_panic!("Could not open tcp stream, reason:\n{}", e.to_string());
             });
 
-            let http_request: Vec<String> = BufReader::new(&mut stream).lines().map(|x| x.unwrap()).take_while(|line| !line.is_empty()).collect();
+            let http_request: Vec<String> = BufReader::new(&mut stream)
+                .lines()
+                .map(|x| x.unwrap())
+                .take_while(|line| !line.is_empty())
+                .collect();
 
             if http_request.is_empty() {
                 // validate request further
@@ -72,9 +74,14 @@ impl HttpServerTrt for HttpServer {
             let endpoint = self.endpoints.get(&endpoint_key);
             match endpoint {
                 None => {
-                    debug!("No handler registered for path: '{path}' and method: {method} not found.");
+                    debug!(
+                        "No handler registered for path: '{path}' and method: {method} not found."
+                    );
                     let contents = format!("Resource: {path} not found.");
-                    let response = format!("HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\n\r\n{contents}", contents.len());
+                    let response = format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\n\r\n{contents}",
+                        contents.len()
+                    );
 
                     stream.write_all(response.as_bytes()).unwrap()
                 }
@@ -83,10 +90,12 @@ impl HttpServerTrt for HttpServer {
                     let endpoint = endpoint.clone();
                     let method_clj = String::from(method);
                     self.workers
-                        .queue(async move {
+                        .queue_blocking(move || {
                             // TODO: handle the error
-                            let response_code = endpoint.handle(stream, path_clj.clone()).unwrap();
-                            debug!("Handled request for path: '{path_clj}' and method: {method_clj}. {response_code}");
+                            let response_code = endpoint.handle(&mut stream, path_clj.clone()).unwrap();
+                            debug!(
+                                "Handled request for path: '{path_clj}' and method: {method_clj}. {response_code}"
+                            );
                         })
                         .unwrap();
                     debug!("Queued request for path: '{path}' and method: {method}.");
@@ -94,4 +103,4 @@ impl HttpServerTrt for HttpServer {
             }
         }
     }
-}*/
+}

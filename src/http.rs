@@ -32,14 +32,16 @@ pub struct Request {
     pub path: String,
     pub endpoint: Handler,
     pub path_params: HashMap<String, String>,
+    pub body: String,
 }
 
 impl Request {
-    pub fn create(path: &str, endpoint: Handler, path_params: HashMap<String, String>) -> Request {
+    pub fn create(path: &str, endpoint: Handler, path_params: HashMap<String, String>, body: String) -> Request {
         Request {
             path: path.to_string(),
             endpoint,
             path_params,
+            body,
         }
     }
 }
