@@ -54,7 +54,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                             panic!("Cannot register filter event for connection.");
                         }
 
-                        let state = ConnState::Read(Vec::new(), 0);
+                        let state = ConnState::Read(Vec::new());
 
                         debug!("Insert event id: {fd}");
                         self.connections.lock().expect("locking problem").insert(fd, (connection, state));
