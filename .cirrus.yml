@@ -1,7 +1,7 @@
 task:
   name: FreeBSD Test
   freebsd_instance:
-    image_family: freebsd-14-0
+    image_family: freebsd-14-2
   env:
     HOME: /tmp
   install_script: 
