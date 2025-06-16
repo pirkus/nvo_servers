@@ -4,14 +4,25 @@ task:
     image_family: freebsd-14-0
   env:
     HOME: /tmp
-  install_script: pkg install -y rust
-  lockfile_script: cargo generate-lockfile
-  cargo_version: cargo version
+  install_script: 
+    - pkg install -y curl
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source $HOME/.cargo/env
+  lockfile_script: 
+    - source $HOME/.cargo/env
+    - cargo generate-lockfile
+  cargo_version: 
+    - source $HOME/.cargo/env
+    - cargo version
   cargo_cache:
     folder: $HOME/.cargo/registry
     fingerprint_script: cat Cargo.lock
-  build_script: cargo build
-  test_script: cargo test
+  build_script: 
+    - source $HOME/.cargo/env
+    - cargo build
+  test_script: 
+    - source $HOME/.cargo/env
+    - cargo test
   before_cache_script: rm -rf $HOME/.cargo/registry/index
 
 task:
@@ -20,12 +31,22 @@ task:
     image: ghcr.io/cirruslabs/macos-runner:sonoma
   env:
     HOME: /tmp
-  install_script: brew install rust
-  lockfile_script: cargo generate-lockfile
-  cargo_version: cargo version
+  install_script: 
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source $HOME/.cargo/env
+  lockfile_script: 
+    - source $HOME/.cargo/env
+    - cargo generate-lockfile
+  cargo_version: 
+    - source $HOME/.cargo/env
+    - cargo version
   cargo_cache:
     folder: $HOME/.cargo/registry
     fingerprint_script: cat Cargo.lock
-  build_script: cargo build
-  test_script: cargo test
+  build_script: 
+    - source $HOME/.cargo/env
+    - cargo build
+  test_script: 
+    - source $HOME/.cargo/env
+    - cargo test
   before_cache_script: rm -rf $HOME/.cargo/registry/index  
