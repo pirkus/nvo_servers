@@ -17,28 +17,27 @@ pub struct Workers {
 type ShareableResultHandle<T> = Arc<ResultHandle<T>>;
 
 impl Workers {
-    pub fn new(size: usize) -> Workers {
+    pub fn new(size: usize) -> Self {
         let (sender, receiver) = channel::<Arc<ChannelMsg>>();
         let receiver = Arc::new(Mutex::new(receiver));
-        let _workers = (0..size).map(|x| Worker::new(x.to_string(), receiver.clone())).collect();
+        
+        let workers = (0..size)
+            .map(|id| Worker::new(id.to_string(), Arc::clone(&receiver)))
+            .collect();
 
         debug!("Starting {size} workers (threads).");
-        Workers { workers: _workers, sender }
+        Self { workers, sender }
     }
 
     pub fn queue(&self, future: impl Future<Output = ()> + 'static + Send) -> Result<(), SendError<Arc<ChannelMsg>>> {
-        let task: Task = Task {
-            future: Mutex::new(Some(Box::pin(future))),
-            sender: self.sender.clone(),
-        };
-        self.sender.send(Arc::new(ChannelMsg::Task(task)))
+        self.send_task(Task::new(future, self.sender.clone()))
     }
 
     pub fn queue_blocking<F>(&self, f: F) -> Result<(), SendError<Arc<ChannelMsg>>>
     where
         F: FnOnce() + Send + 'static,
     {
-        self.queue(async { f() })
+        self.queue(async move { f() })
     }
 
     pub fn queue_with_result<F>(&self, future: F) -> Result<ShareableResultHandle<F::Output>, SendError<Arc<ChannelMsg>>>
@@ -46,38 +45,50 @@ impl Workers {
         F: Future + Send + 'static,
         F::Output: Send,
     {
-        let blocking_val: ShareableResultHandle<F::Output> = Arc::new(ResultHandle::new());
-        let blocking_val_clone: ShareableResultHandle<F::Output> = blocking_val.clone();
-        let inner_future = async move {
-            let outer_future_res = future.await;
-            blocking_val.set(outer_future_res);
+        let result_handle = Arc::new(ResultHandle::new());
+        let result_clone = Arc::clone(&result_handle);
+        
+        let wrapped_future = async move {
+            result_handle.set(future.await);
         };
-        let task: Task = Task {
-            future: Mutex::new(Some(Box::pin(inner_future))),
-            sender: self.sender.clone(),
-        };
-
-        match self.sender.send(Arc::new(ChannelMsg::Task(task))) {
-            Ok(_) => Ok(blocking_val_clone),
-            Err(z) => Err(z),
-        }
+        
+        self.send_task(Task::new(wrapped_future, self.sender.clone()))
+            .map(|_| result_clone)
     }
 
     pub fn poison_all(self) {
-        self.workers.into_iter().for_each(|w| w.gracefully_shutdown(self.sender.clone()))
+        self.workers
+            .into_iter()
+            .for_each(|worker| worker.gracefully_shutdown(self.sender.clone()));
+    }
+    
+    fn send_task(&self, task: Task) -> Result<(), SendError<Arc<ChannelMsg>>> {
+        self.sender.send(Arc::new(ChannelMsg::Task(task)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::hint::spin_loop;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread::sleep;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crate::utils;
 
     use super::*;
+
+    // Helper function to wait for a condition with timeout
+    fn wait_for<F>(condition: F, timeout: Duration) -> bool
+    where
+        F: Fn() -> bool,
+    {
+        let start = Instant::now();
+        while !condition() && start.elapsed() < timeout {
+            sleep(Duration::from_millis(1));
+        }
+        condition()
+    }
 
     #[test]
     fn workers_can_process_work() {
@@ -85,13 +96,14 @@ mod tests {
         let workers = Workers::new(1);
         workers
             .queue(async {
-                IS_MODIFIED.swap(true, Ordering::SeqCst);
+                IS_MODIFIED.store(true, Ordering::SeqCst);
             })
-            .unwrap();
+            .expect("Failed to queue task");
 
-        while !IS_MODIFIED.load(Ordering::SeqCst) {
-            sleep(Duration::from_millis(1));
-        }
+        assert!(wait_for(
+            || IS_MODIFIED.load(Ordering::SeqCst),
+            Duration::from_secs(2)
+        ));
 
         workers.poison_all();
     }
@@ -100,49 +112,53 @@ mod tests {
     fn queue_with_result_does_not_block_and_return_a_result() {
         static IS_MODIFIED: AtomicBool = AtomicBool::new(false);
         static ORDER: Mutex<Vec<i8>> = Mutex::new(Vec::new());
+        
         let workers = Workers::new(1);
-        let a = utils::poor_mans_random();
-        let b = utils::poor_mans_random();
-        let f = async move {
+        let (a, b) = (utils::poor_mans_random(), utils::poor_mans_random());
+        
+        let future = async move {
             while !IS_MODIFIED.load(Ordering::SeqCst) {
                 spin_loop()
             }
             ORDER.lock().unwrap().push(2);
             a / b
         };
-        let res = workers.queue_with_result(f);
+        
+        let result_handle = workers
+            .queue_with_result(future)
+            .expect("Failed to queue task with result");
 
         ORDER.lock().unwrap().push(1);
-        IS_MODIFIED.swap(true, Ordering::SeqCst); // comment out to 💀-🔐
-        assert_eq!(res.unwrap().get(), a / b);
-        assert_eq!(ORDER.lock().unwrap().clone(), [1, 2].to_vec());
+        IS_MODIFIED.store(true, Ordering::SeqCst);
+        
+        assert_eq!(result_handle.get(), a / b);
+        assert_eq!(*ORDER.lock().unwrap(), vec![1, 2]);
 
-        workers.poison_all()
+        workers.poison_all();
     }
 
     #[test]
     fn queue_blocking_works() {
-        static IS_MODIFIED_BLOCKING: AtomicBool = AtomicBool::new(false);
+        static IS_MODIFIED: AtomicBool = AtomicBool::new(false);
+        
         let workers = Workers::new(1);
         
         workers
             .queue_blocking(|| {
-                IS_MODIFIED_BLOCKING.store(true, Ordering::SeqCst);
+                IS_MODIFIED.store(true, Ordering::SeqCst);
             })
-            .unwrap();
+            .expect("Failed to queue blocking task");
 
-        while !IS_MODIFIED_BLOCKING.load(Ordering::SeqCst) {
-            sleep(Duration::from_millis(1));
-        }
+        assert!(wait_for(
+            || IS_MODIFIED.load(Ordering::SeqCst),
+            Duration::from_secs(2)
+        ));
 
-        assert!(IS_MODIFIED_BLOCKING.load(Ordering::SeqCst));
         workers.poison_all();
     }
 
     #[test]
     fn poison_all_stops_workers() {
-        use std::sync::atomic::AtomicUsize;
-        
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         
         // Reset the counter
@@ -150,59 +166,56 @@ mod tests {
         
         let workers = Workers::new(2);
         
-        // Queue some simple tasks that complete quickly
-        for _ in 0..5 {
+        // Queue tasks using iterator
+        (0..5).for_each(|_| {
             workers
                 .queue(async {
                     COUNTER.fetch_add(1, Ordering::SeqCst);
                 })
-                .unwrap();
-        }
+                .expect("Failed to queue task");
+        });
         
-        // Give tasks time to complete
-        let start = std::time::Instant::now();
-        while COUNTER.load(Ordering::SeqCst) < 5 && start.elapsed() < Duration::from_secs(2) {
-            sleep(Duration::from_millis(10));
-        }
+        // Wait for tasks to complete
+        wait_for(
+            || COUNTER.load(Ordering::SeqCst) >= 5,
+            Duration::from_secs(2)
+        );
         
-        // Now poison the workers
         workers.poison_all();
         
-        // Verify that at least some tasks completed
         assert!(COUNTER.load(Ordering::SeqCst) > 0);
     }
 
     #[test]
     fn queue_with_result_returns_correct_value() {
-        use std::sync::atomic::AtomicBool;
-        
         static FUTURE_POLLED: AtomicBool = AtomicBool::new(false);
         
         let workers = Workers::new(2);
         
-        // Create a future that signals when it's been polled
-        let handle = workers.queue_with_result(async {
-            FUTURE_POLLED.store(true, Ordering::SeqCst);
-            42
-        }).unwrap();
+        // Test with integer result
+        let handle = workers
+            .queue_with_result(async {
+                FUTURE_POLLED.store(true, Ordering::SeqCst);
+                42
+            })
+            .expect("Failed to queue task with result");
         
         // Wait for the future to be polled
-        let start = std::time::Instant::now();
-        while !FUTURE_POLLED.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(2) {
-            sleep(Duration::from_millis(1));
-        }
+        assert!(wait_for(
+            || FUTURE_POLLED.load(Ordering::SeqCst),
+            Duration::from_secs(2)
+        ));
         
-        // Now it should be safe to get the result
         assert_eq!(handle.get(), 42);
         
-        // Test with a string result too
-        let handle2 = workers.queue_with_result(async {
-            "hello".to_string()
-        }).unwrap();
+        // Test with string result
+        let handle2 = workers
+            .queue_with_result(async {
+                "hello".to_string()
+            })
+            .expect("Failed to queue task with result");
         
-        // Give it a moment to be processed
         sleep(Duration::from_millis(10));
-        
         assert_eq!(handle2.get(), "hello".to_string());
         
         workers.poison_all();

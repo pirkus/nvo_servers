@@ -15,6 +15,18 @@ pub struct Task {
     pub sender: Sender<Arc<ChannelMsg>>,
 }
 
+impl Task {
+    pub fn new(
+        future: impl Future<Output = ()> + Send + 'static,
+        sender: Sender<Arc<ChannelMsg>>
+    ) -> Self {
+        Self {
+            future: Mutex::new(Some(Box::pin(future))),
+            sender,
+        }
+    }
+}
+
 pub enum ChannelMsg {
     Task(Task),
     Shutdown,
@@ -78,8 +90,7 @@ impl Wake for ChannelMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::Ordering::Relaxed;
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
@@ -88,14 +99,15 @@ mod tests {
         static IS_MODIFIED: AtomicBool = AtomicBool::new(false);
         let (sender, recv) = channel::<Arc<ChannelMsg>>();
         let worker = Worker::new("a-worker".to_string(), Arc::new(Mutex::new(recv)));
-        let boxed_future = Box::pin(async {
-            IS_MODIFIED.swap(true, Relaxed);
-        });
-        let task = ChannelMsg::Task(Task {
-            future: Mutex::new(Some(boxed_future)),
-            sender: sender.clone(),
-        });
-        sender.send(Arc::new(task)).unwrap();
+        
+        let task = Task::new(
+            async {
+                IS_MODIFIED.swap(true, Relaxed);
+            },
+            sender.clone()
+        );
+        
+        sender.send(Arc::new(ChannelMsg::Task(task))).unwrap();
 
         while !IS_MODIFIED.load(Relaxed) {
             thread::sleep(Duration::from_millis(10));
