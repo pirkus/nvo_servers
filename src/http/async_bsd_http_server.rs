@@ -69,7 +69,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                     }
                 }
             } else {
-                let endpoints = self.endpoints.clone();
+                let path_router = self.path_router.clone();
                 let conns = self.connections.clone();
                 let fd = kevent.ident as i32;
 
@@ -84,7 +84,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                         // Queue the async work without blocking
                         self.workers
                             .queue(async move {
-                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, endpoints, deps_map).await {
+                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
                                     if new_state != ConnState::Flush {
                                         if let Ok(mut conns_lock) = conns.lock() {
                                             conns_lock.insert(fd, (conn, new_state));

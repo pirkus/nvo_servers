@@ -5,7 +5,8 @@ use std::fmt;
 #[derive(Clone, Debug, Default)]
 pub struct Headers {
     // Store headers with lowercase keys for case-insensitive lookup
-    inner: HashMap<String, String>,
+    // Value is a tuple of (original_key, value) to preserve case
+    inner: HashMap<String, (String, String)>,
 }
 
 impl Headers {
@@ -20,7 +21,7 @@ impl Headers {
     pub fn insert(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) {
         self.inner.insert(
             key.as_ref().to_lowercase(),
-            value.as_ref().to_string(),
+            (key.as_ref().to_string(), value.as_ref().to_string()),
         );
     }
 
@@ -28,7 +29,7 @@ impl Headers {
     pub fn get(&self, key: impl AsRef<str>) -> Option<&str> {
         self.inner
             .get(&key.as_ref().to_lowercase())
-            .map(|s| s.as_str())
+            .map(|(_, v)| v.as_str())
     }
 
     /// Check if a header exists (case-insensitive)
@@ -38,7 +39,9 @@ impl Headers {
 
     /// Remove a header (case-insensitive)
     pub fn remove(&mut self, key: impl AsRef<str>) -> Option<String> {
-        self.inner.remove(&key.as_ref().to_lowercase())
+        self.inner
+            .remove(&key.as_ref().to_lowercase())
+            .map(|(_, v)| v)
     }
 
     /// Get the number of headers
@@ -51,9 +54,11 @@ impl Headers {
         self.inner.is_empty()
     }
 
-    /// Iterate over headers
+    /// Iterate over headers with preserved case
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.inner.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+        self.inner
+            .values()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// Parse Content-Length header
@@ -90,8 +95,8 @@ impl Headers {
 
 impl fmt::Display for Headers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (key, value) in &self.inner {
-            writeln!(f, "{}: {}", key, value)?;
+        for (original_key, value) in self.inner.values() {
+            writeln!(f, "{}: {}", original_key, value)?;
         }
         Ok(())
     }
@@ -109,7 +114,11 @@ impl From<HashMap<String, String>> for Headers {
 
 impl From<Headers> for HashMap<String, String> {
     fn from(headers: Headers) -> Self {
-        headers.inner
+        headers
+            .inner
+            .into_iter()
+            .map(|(_, (k, v))| (k, v))
+            .collect()
     }
 }
 

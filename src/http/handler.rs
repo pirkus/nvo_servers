@@ -12,6 +12,14 @@ pub struct Handler {
 }
 
 impl Handler {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+    
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
     pub fn gen_key(&self) -> String {
         format!("{}-{}", self.path, self.method)
     }

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{futures::workers::Workers, typemap::DepsMap};
 
-use super::{async_handler::AsyncHandler, ConnState};
+use super::{async_handler::AsyncHandler, path_matcher::PathRouter, ConnState};
 
 pub trait AsyncHttpServerTrt {
     fn builder() -> AsyncHttpServerBuilder;
@@ -18,7 +18,7 @@ pub trait AsyncHttpServerTrt {
 
 pub struct AsyncHttpServer {
     pub listen_addr: String,
-    pub endpoints: HashSet<Arc<AsyncHandler>>,
+    pub path_router: Arc<PathRouter<Arc<AsyncHandler>>>,
     pub workers: Workers,
     pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
     pub started: AtomicBool,
@@ -91,9 +91,17 @@ impl AsyncHttpServerBuilder {
     }
 
     pub fn build(self) -> AsyncHttpServer {
+        // Build the PathRouter from handlers
+        let mut router = PathRouter::new();
+        for handler in self.handlers {
+            let handler_arc = Arc::new(handler);
+            let path = handler_arc.path.clone();
+            router.add_route(&path, handler_arc);
+        }
+        
         AsyncHttpServer {
             listen_addr: self.listen_addr,
-            endpoints: self.handlers.into_iter().map(Arc::new).collect(),
+            path_router: Arc::new(router),
             workers: Workers::new(self.workers_number),
             connections: Default::default(),
             started: AtomicBool::new(false),

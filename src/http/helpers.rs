@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use log::debug;
 
 /// Error type for path-related operations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum PathError {
+    #[allow(dead_code)]
     LengthMismatch { pattern_len: usize, path_len: usize },
 }
 
-/// Extract path parameters from a pattern and path using functional style
-/// Returns an error instead of panicking when lengths don't match
+/// Extract path parameters from a URL pattern and path
+/// Returns an error if the pattern and path don't match in structure
+#[allow(dead_code)]
 pub fn extract_path_params(pattern: &str, path: &str) -> Result<HashMap<String, String>, PathError> {
     let split_pattern: Vec<&str> = pattern.split('/').collect();
     let split_path: Vec<&str> = path.split('/').collect();
@@ -20,36 +21,32 @@ pub fn extract_path_params(pattern: &str, path: &str) -> Result<HashMap<String, 
         });
     }
 
-    // Functional approach using iterator methods
     Ok(split_pattern
         .iter()
         .zip(split_path.iter())
         .filter_map(|(pattern_part, path_part)| {
             pattern_part
                 .strip_prefix(':')
-                .map(|param_name| (param_name.to_string(), (*path_part).to_string()))
+                .map(|param_name| (param_name.to_string(), path_part.to_string()))
         })
         .collect())
 }
 
-/// Check if a path matches a pattern with parameter placeholders
+/// Check if a path matches a pattern (with support for :param syntax)
+#[allow(dead_code)]
 pub fn path_matches_pattern(pattern: &str, path: &str) -> bool {
-    let split_pattern: Vec<&str> = pattern.split('/').collect();
-    let split_path: Vec<&str> = path.split('/').collect();
-    
-    debug!("split_pattern: {split_pattern:?}, split_path: {split_path:?}");
-    
-    // Early return for length mismatch
-    if split_pattern.len() != split_path.len() {
+    let pattern_parts: Vec<&str> = pattern.split('/').collect();
+    let path_parts: Vec<&str> = path.split('/').collect();
+
+    if pattern_parts.len() != path_parts.len() {
         return false;
     }
 
-    // Functional approach using all() instead of map().reduce()
-    split_pattern
+    pattern_parts
         .iter()
-        .zip(split_path.iter())
+        .zip(path_parts.iter())
         .all(|(pattern_part, path_part)| {
-            path_part == pattern_part || pattern_part.starts_with(':')
+            pattern_part.starts_with(':') || pattern_part == path_part
         })
 }
 

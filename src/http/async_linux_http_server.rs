@@ -80,10 +80,10 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                     let deps_map = self.deps_map.clone();
 
                     if let Some((conn, conn_status)) = option {
-                        let endpoint = self.endpoints.clone();
+                        let path_router = self.path_router.clone();
                         self.workers
                             .queue(async move {
-                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, endpoint, deps_map).await {
+                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
                                     if new_state != ConnState::Flush {
                                         if let Ok(mut conns_lock) = conns.lock() {
                                             conns_lock.insert(fd, (conn, new_state));

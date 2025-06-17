@@ -76,6 +76,6 @@ mod unix_example {
             .with_handlers(HashSet::from([AsyncHandler::new("GET", "/get/:name", get_handler), AsyncHandler::new("POST", "/post", post_handler)]))
             .with_dep(client)
             .build()
-            .start_blocking()
+            .start_blocking();
     }
 }

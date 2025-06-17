@@ -25,7 +25,9 @@ pub mod handler;
 pub mod headers;
 mod helpers;
 pub mod http_status;
+pub mod path_matcher;
 pub mod response;
+pub mod response_builder;
 
 pub trait ConnStream: Read + Write + Peek + TryClone + Send + Sync {}
 

@@ -42,35 +42,44 @@ impl Worker {
         let worker_name = name.clone();
         let thread_handle = thread::Builder::new()
             .name(worker_name.clone())
-            .spawn(move || loop {
-                // Receive task from this worker's dedicated channel
-                match recv.recv() {
-                    Ok(task_ptr) => {
-                        debug!("Executing job. Worker name: {worker_name}");
-                        match task_ptr.deref() {
-                            ChannelMsg::Task(task) => {
-                                let mut future_mutex = task.future.lock().expect("poisoned lock");
-                                if let Some(mut future) = future_mutex.take() {
-                                    let waker = Waker::from(task_ptr.clone());
-                                    let context = &mut Context::from_waker(&waker);
-                                    if future.as_mut().poll(context).is_pending() {
-                                        *future_mutex = Some(future)
-                                    }
-                                }
-                            }
-
-                            ChannelMsg::Shutdown => break,
+            .spawn(move || {
+                std::iter::repeat(())
+                    .map(|_| recv.recv())
+                    .take_while(|result| match result {
+                        Ok(task_ptr) => !matches!(task_ptr.deref(), ChannelMsg::Shutdown),
+                        Err(e) => {
+                            error!("Shutting down. Worker name: {worker_name}, reason {e}");
+                            false
                         }
-                    }
-                    Err(e) => {
-                        error!("Shutting down. Worker name: {worker_name}, reason {e}");
-                        break;
-                    }
-                }
+                    })
+                    .for_each(|result| {
+                        if let Ok(task_ptr) = result {
+                            debug!("Executing job. Worker name: {worker_name}");
+                            if let ChannelMsg::Task(task) = task_ptr.deref() {
+                                Self::process_task(task, &task_ptr);
+                            }
+                        }
+                    });
             })
             .expect("Failed to spawn worker thread");
 
         Worker { name, thread_handle }
+    }
+    
+    fn process_task(task: &Task, task_ptr: &Arc<ChannelMsg>) {
+        task.future
+            .lock()
+            .ok()
+            .and_then(|mut future_mutex| future_mutex.take())
+            .map(|mut future| {
+                let waker = Waker::from(task_ptr.clone());
+                let context = &mut Context::from_waker(&waker);
+                if future.as_mut().poll(context).is_pending() {
+                    if let Ok(mut future_mutex) = task.future.lock() {
+                        *future_mutex = Some(future);
+                    }
+                }
+            });
     }
 
     pub fn join(self) {
