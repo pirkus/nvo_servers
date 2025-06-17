@@ -11,6 +11,7 @@ use handler::Handler;
 use log::debug;
 
 use crate::typemap::DepsMap;
+use self::headers::Headers;
 
 #[cfg(any(target_os = "freebsd", target_os = "macos"))]
 pub mod async_bsd_http_server;
@@ -21,6 +22,7 @@ pub mod async_linux_http_server;
 pub mod async_handler;
 pub mod blocking_http_server;
 pub mod handler;
+pub mod headers;
 mod helpers;
 pub mod http_status;
 pub mod response;
@@ -52,12 +54,12 @@ pub struct AsyncRequest {
     pub handler: Arc<AsyncHandler>,
     pub path_params: HashMap<String, String>,
     pub deps: Arc<DepsMap>,
-    pub headers: HashMap<String, String>,
+    pub headers: Headers,
     pub body: Arc<Mutex<dyn ConnStream>>,
 }
 
 impl AsyncRequest {
-    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, headers: HashMap<String, String>, body: Arc<Mutex<dyn ConnStream>>) -> Self {
+    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, headers: Headers, body: Arc<Mutex<dyn ConnStream>>) -> Self {
         AsyncRequest {
             path: path.to_string(),
             handler,
@@ -80,12 +82,9 @@ impl AsyncRequest {
             };
         }
 
-        // TODO: header names to be case insensitive and
-        // TODO: should we handle cases where content length is uknown? check RFC
-        if let Some(content_length) = self.headers.get("content-length") {
-            debug!("Request content-length: {content_length}");
-            let content_len = content_length.parse::<usize>()
-                .map_err(|_| Error::new(400, "Invalid Content-Length header"))?;
+        // Headers are now case-insensitive
+        if let Some(content_len) = self.headers.content_length() {
+            debug!("Request content-length: {content_len}");
             let mut buf = vec![0u8; content_len];
             loop {
                 match self.body.lock().unwrap().read_exact(&mut buf) {

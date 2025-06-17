@@ -1,7 +1,7 @@
 use crate::typemap::DepsMap;
 
 use super::ConnStream;
-use super::{helpers, response::Response, AsyncRequest, ConnState};
+use super::{headers::Headers, helpers, response::Response, AsyncRequest, ConnState};
 use crate::futures::catch_unwind::CatchUnwind;
 use log::{debug, error};
 use std::collections::{HashMap, HashSet};
@@ -59,17 +59,7 @@ impl AsyncHandler {
                 let method = first_line[0];
                 let path = first_line[1];
                 let _protocol = first_line[2];
-                let headers = &request[1..]
-                    .iter()
-                    .map(|x| {
-                        if x.contains(':') {
-                            let split = x.split_once(':').unwrap();
-                            (split.0.trim().to_string().to_lowercase(), split.1.trim().to_string().to_lowercase())
-                        } else {
-                            (x.trim().to_string(), "".to_string())
-                        }
-                    })
-                    .collect::<HashMap<String, String>>();
+                let headers = Headers::from_lines(request[1..].iter().copied());
 
                 debug!("http_req_size = {http_req_size}; ");
 
@@ -209,6 +199,7 @@ pub trait AsyncHandlerFn: Send + Sync + 'static {
 mod tests {
     use crate::futures::workers::Workers;
     use crate::http::async_handler::AsyncHandler;
+    use crate::http::headers::Headers;
     use crate::http::response::Response;
     use crate::http::{AsyncRequest, ConnState, ConnStream, Peek, TryClone};
     use crate::typemap::DepsMap;
@@ -316,7 +307,7 @@ mod tests {
                 handler.clone(),
                 HashMap::from([("id".to_string(), "1".to_string())]),
                 Arc::new(DepsMap::default()),
-                HashMap::new(),
+                Headers::new(),
                 Arc::new(Mutex::new(conn)),
             ),
             0,

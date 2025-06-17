@@ -1,7 +1,7 @@
 use crate::futures::workers::Workers;
 use crate::http::handler::Handler;
-use crate::log_panic;
-use log::{debug, info};
+use crate::error::{ServerError, ServerResult};
+use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -14,25 +14,26 @@ pub struct HttpServer {
 }
 
 pub trait HttpServerTrt {
-    fn create_addr(addr: &str, endpoints: HashSet<Handler>) -> HttpServer;
-    fn create_port(port: u32, endpoints: HashSet<Handler>) -> HttpServer;
-    fn start_blocking(&self);
+    fn create_addr(addr: &str, endpoints: HashSet<Handler>) -> ServerResult<HttpServer>;
+    fn create_port(port: u32, endpoints: HashSet<Handler>) -> ServerResult<HttpServer>;
+    fn start_blocking(&self) -> ServerResult<()>;
 }
 
 impl HttpServerTrt for HttpServer {
-    fn create_addr(listen_addr: &str, endpoints: HashSet<Handler>) -> HttpServer {
+    fn create_addr(listen_addr: &str, endpoints: HashSet<Handler>) -> ServerResult<HttpServer> {
         let thread_count = thread::available_parallelism().unwrap().get();
         let workers = Workers::new(thread_count);
         let endpoints = endpoints.into_iter().map(|x| (x.gen_key(), x)).collect();
 
-        let listener = TcpListener::bind(listen_addr).unwrap_or_else(|e| log_panic!("Could not start listening on {listen_addr}, reason:\n{reason}", reason = e.to_string()));
+        let listener = TcpListener::bind(listen_addr)
+            .map_err(|e| ServerError::Io(format!("Could not start listening on {}: {}", listen_addr, e)))?;
 
-        HttpServer { endpoints, workers, listener }
+        Ok(HttpServer { endpoints, workers, listener })
     }
 
-    fn create_port(port: u32, endpoints: HashSet<Handler>) -> HttpServer {
+    fn create_port(port: u32, endpoints: HashSet<Handler>) -> ServerResult<HttpServer> {
         if port > 65535 {
-            log_panic!("Port cannot be higher than 65535, was: {port}")
+            return Err(ServerError::Configuration(format!("Port cannot be higher than 65535, was: {}", port)));
         }
         let thread_count = thread::available_parallelism().unwrap().get();
         let endpoints = endpoints.into_iter().map(|x| (x.gen_key(), x)).collect();
@@ -40,21 +41,26 @@ impl HttpServerTrt for HttpServer {
 
         let listen_addr = format!("0.0.0.0:{port}");
 
-        let listener = TcpListener::bind(listen_addr.clone()).unwrap_or_else(|e| log_panic!("Could not start listening on {listen_addr}, reason:\n{reason}", reason = e.to_string()));
+        let listener = TcpListener::bind(&listen_addr)
+            .map_err(|e| ServerError::Io(format!("Could not start listening on {}: {}", listen_addr, e)))?;
 
         info!("Starting HTTP server on: {listen_addr}");
-        HttpServer { endpoints, workers, listener }
+        Ok(HttpServer { endpoints, workers, listener })
     }
 
-    fn start_blocking(&self) {
+    fn start_blocking(&self) -> ServerResult<()> {
         for stream in self.listener.incoming() {
-            let mut stream = stream.unwrap_or_else(|e| {
-                log_panic!("Could not open tcp stream, reason:\n{}", e.to_string());
-            });
+            let mut stream = match stream {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Could not open tcp stream: {}", e);
+                    continue;
+                }
+            };
 
             let http_request: Vec<String> = BufReader::new(&mut stream)
                 .lines()
-                .map(|x| x.unwrap())
+                .filter_map(Result::ok)
                 .take_while(|line| !line.is_empty())
                 .collect();
 
@@ -102,5 +108,8 @@ impl HttpServerTrt for HttpServer {
                 }
             }
         }
+        
+        // This is never reached due to the infinite loop, but needed for type checking
+        Ok(())
     }
 }

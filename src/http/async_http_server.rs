@@ -50,10 +50,11 @@ impl AsyncHttpServerBuilder {
     }
 
     pub fn with_port(mut self, port: usize) -> Self {
-        if port > 65536 {
-            panic!("Port cannot be larger than 65535. Was: {port}")
+        if port > 65535 {
+            log::error!("Port cannot be larger than 65535. Was: {}. Using default port 9000.", port);
+            return self;
         }
-        let hostname = self.listen_addr.split(':').nth(0).unwrap();
+        let hostname = self.listen_addr.split(':').next().unwrap_or("0.0.0.0");
         self.listen_addr = format!("{hostname}:{port}");
         self
     }
