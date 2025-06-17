@@ -38,40 +38,43 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn new(name: String, recv: Arc<Mutex<Receiver<Arc<ChannelMsg>>>>) -> Worker {
+    pub(crate) fn new(name: String, recv: Receiver<Arc<ChannelMsg>>) -> Worker {
         let worker_name = name.clone();
-        let thread_handle = thread::spawn(move || loop {
-            match recv.lock().expect("poisoned lock").recv() {
-                Ok(task_ptr) => {
-                    debug!("Executing job. Worker name: {worker_name}");
-                    match task_ptr.deref() {
-                        ChannelMsg::Task(task) => {
-                            let mut future_mutex = task.future.lock().expect("poisoned lock");
-                            if let Some(mut future) = future_mutex.take() {
-                                let waker = Waker::from(task_ptr.clone());
-                                let context = &mut Context::from_waker(&waker);
-                                if future.as_mut().poll(context).is_pending() {
-                                    *future_mutex = Some(future)
+        let thread_handle = thread::Builder::new()
+            .name(worker_name.clone())
+            .spawn(move || loop {
+                // Receive task from this worker's dedicated channel
+                match recv.recv() {
+                    Ok(task_ptr) => {
+                        debug!("Executing job. Worker name: {worker_name}");
+                        match task_ptr.deref() {
+                            ChannelMsg::Task(task) => {
+                                let mut future_mutex = task.future.lock().expect("poisoned lock");
+                                if let Some(mut future) = future_mutex.take() {
+                                    let waker = Waker::from(task_ptr.clone());
+                                    let context = &mut Context::from_waker(&waker);
+                                    if future.as_mut().poll(context).is_pending() {
+                                        *future_mutex = Some(future)
+                                    }
                                 }
                             }
-                        }
 
-                        ChannelMsg::Shutdown => break,
+                            ChannelMsg::Shutdown => break,
+                        }
+                    }
+                    Err(e) => {
+                        error!("Shutting down. Worker name: {worker_name}, reason {e}");
+                        break;
                     }
                 }
-                Err(e) => {
-                    error!("Shutting down. Worker name: {worker_name}, reason {e}");
-                    break;
-                }
-            }
-        });
+            })
+            .expect("Failed to spawn worker thread");
 
         Worker { name, thread_handle }
     }
 
-    pub fn gracefully_shutdown(self, sender: Sender<Arc<ChannelMsg>>) {
-        info!("Gracefully shutting down worker {}", self.name);
-        sender.send(Arc::new(ChannelMsg::Shutdown)).unwrap();
+    pub fn join(self) {
+        info!("Waiting for worker {} to finish", self.name);
         self.thread_handle.join().unwrap();
     }
 }
@@ -98,7 +101,7 @@ mod tests {
     fn worker_can_process_work() {
         static IS_MODIFIED: AtomicBool = AtomicBool::new(false);
         let (sender, recv) = channel::<Arc<ChannelMsg>>();
-        let worker = Worker::new("a-worker".to_string(), Arc::new(Mutex::new(recv)));
+        let worker = Worker::new("a-worker".to_string(), recv);
         
         let task = Task::new(
             async {
@@ -109,10 +112,18 @@ mod tests {
         
         sender.send(Arc::new(ChannelMsg::Task(task))).unwrap();
 
-        while !IS_MODIFIED.load(Relaxed) {
-            thread::sleep(Duration::from_millis(10));
-        }
+        // Wait for task to complete
+        std::iter::repeat_with(|| IS_MODIFIED.load(Relaxed))
+            .find(|&ready| {
+                if !ready {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                ready
+            })
+            .unwrap();
 
-        worker.gracefully_shutdown(sender)
+        // Send shutdown message and wait for worker to finish
+        sender.send(Arc::new(ChannelMsg::Shutdown)).unwrap();
+        worker.join()
     }
 }
