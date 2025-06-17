@@ -76,7 +76,7 @@ impl AsyncRequest {
                 Ok(_) => break,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                Err(_e) => panic!("Do we want to panic here"),
+                Err(e) => return Err(Error::new(400, &format!("Failed to read request header: {}", e))),
             };
         }
 
@@ -84,16 +84,19 @@ impl AsyncRequest {
         // TODO: should we handle cases where content length is uknown? check RFC
         if let Some(content_length) = self.headers.get("content-length") {
             debug!("Request content-length: {content_length}");
-            let mut buf = vec![0u8; content_length.clone().parse::<usize>().unwrap()];
+            let content_len = content_length.parse::<usize>()
+                .map_err(|_| Error::new(400, "Invalid Content-Length header"))?;
+            let mut buf = vec![0u8; content_len];
             loop {
                 match self.body.lock().unwrap().read_exact(&mut buf) {
                     Ok(_) => break,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                    Err(_e) => panic!("Do we want to panic here"),
+                    Err(e) => return Err(Error::new(400, &format!("Failed to read request body: {}", e))),
                 };
             }
-            Ok(String::from_utf8(buf).unwrap())
+            String::from_utf8(buf)
+                .map_err(|_| Error::new(400, "Invalid UTF-8 in request body"))
         } else {
             Err(Error::new(411, "Missing Content-Length header"))
         }
@@ -143,10 +146,10 @@ pub trait TryClone {
     fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>>;
 }
 
-// fuck TcpStream for returning itself on try_clone
 impl TryClone for TcpStream {
     fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>> {
-        Ok(Arc::new(Mutex::new(self.try_clone().unwrap())))
+        self.try_clone()
+            .map(|stream| Arc::new(Mutex::new(stream)) as Arc<Mutex<dyn ConnStream>>)
     }
 }
 

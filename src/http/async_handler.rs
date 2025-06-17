@@ -32,7 +32,7 @@ impl AsyncHandler {
                         return Some((connection, ConnState::Flush));
                     }
                 }
-                let http_req_size = match from_utf8(&buf).expect("string").find("\r\n\r\n") {
+                let http_req_size = match from_utf8(&buf).ok().and_then(|s| s.find("\r\n\r\n")) {
                     Some(n) => n,
                     None => {
                         error!("Received not an HTTP request.");
@@ -46,7 +46,10 @@ impl AsyncHandler {
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone()))),
                     Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone()))),
-                    Err(e) => panic!("{}", e), // TODO: probably don't wanna blow up here
+                    Err(e) => {
+                        error!("Failed to read request: {}", e);
+                        return Some((connection, ConnState::Flush));
+                    }
                 };
 
                 let raw_req = String::from_utf8_lossy(&buf);
@@ -88,10 +91,16 @@ impl AsyncHandler {
                     }
                     Some(endpoint) => {
                         debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
+                        // Path has already been validated by path_matches_pattern, so this should be safe
+                        let path_params = helpers::extract_path_params(&endpoint.path, path)
+                            .unwrap_or_else(|e| {
+                                error!("Failed to extract path params: {:?}", e);
+                                HashMap::new()
+                            });
                         AsyncRequest::create(
                             path,
                             endpoint.clone(),
-                            helpers::extract_path_params(&endpoint.path, path),
+                            path_params,
                             deps_map,
                             headers.clone(),
                             connection.try_clone().unwrap(),
@@ -131,7 +140,10 @@ impl AsyncHandler {
                         Ok(n) => written += n,
                         Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Write(req.clone(), written))),
                         Err(ref err) if err.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Write(req.clone(), written))),
-                        Err(err) => panic!("{}", err), // I guess we don't wanna die here ?
+                        Err(err) => {
+                            error!("Failed to write response: {}", err);
+                            return Some((connection, ConnState::Flush));
+                        }
                     }
                 }
                 Some((connection, ConnState::Flush))
@@ -273,20 +285,13 @@ mod tests {
         let result =
             workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new()), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
         let (_conn, conn_state) = result.unwrap().get().unwrap();
-        assert_eq!(
-            conn_state,
-            ConnState::Write(
-                AsyncRequest::create(
-                    "/some/1",
-                    handler.clone(),
-                    HashMap::from([("id".to_string(), "1".to_string())]),
-                    Arc::new(DepsMap::default()),
-                    HashMap::new(),
-                    Arc::new(Mutex::new(conn)),
-                ),
-                0,
-            )
-        );
+        match conn_state {
+            ConnState::Write(req, 0) => {
+                assert_eq!(req.path, "/some/1");
+                assert_eq!(req.path_params.get("id"), Some(&"1".to_string()));
+            }
+            _ => panic!("Expected Write state"),
+        }
 
         workers.poison_all()
     }

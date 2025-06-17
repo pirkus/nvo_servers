@@ -17,13 +17,17 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
         add_event(kqueue, listener.as_raw_fd() as usize, kqueue_sys::EventFilter::EVFILT_READ, kqueue_sys::EventFlag::EV_ADD | kqueue_sys::EventFlag::EV_ENABLE);
 
         loop {
+            if self.shutdown_requested.load(Ordering::SeqCst) {
+                break;
+            }
             self.started.store(true, std::sync::atomic::Ordering::SeqCst);
             // extract this, the contents does not matter
             let mut kevent = kqueue_sys::kevent::new(0, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::empty(), kqueue_sys::FilterFlag::empty());
             let events_number = unsafe { kqueue_sys::kevent(kqueue, core::ptr::null(), 0, &mut kevent, 1, core::ptr::null()) };
 
             if events_number == -1 {
-                panic!("could not retrieve an event from kqueue");
+                log::error!("Could not retrieve an event from kqueue");
+                continue;
             }
 
             debug!("Events count: {events_number}");
@@ -31,19 +35,28 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
             if kevent.ident as i32 == listener.as_raw_fd() {
                 match listener.accept() {
                     Ok((connection, _)) => {
-                        connection.set_nonblocking(true).expect("Could not set.");
+                        if let Err(e) = connection.set_nonblocking(true) {
+                            log::error!("Failed to set connection to non-blocking: {}", e);
+                            continue;
+                        }
                         let fd = connection.as_raw_fd();
                         add_event(kqueue, fd as usize, kqueue_sys::EventFilter::EVFILT_READ, kqueue_sys::EventFlag::EV_ADD);
                         add_event(kqueue, fd as usize, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::EV_ADD);
 
                         let state = ConnState::Read(Vec::new());
                         debug!("Insert event id: {fd}");
-                        self.connections.lock().expect("locking problem").insert(fd, (connection, state));
+                        if let Ok(mut conns) = self.connections.lock() {
+                            conns.insert(fd, (connection, state));
+                        } else {
+                            log::error!("Failed to acquire connections lock");
+                        }
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                    // do we wanna die here?
-                    Err(e) => panic!("failed to accept: {}", e),
+                    Err(e) => {
+                        log::error!("Failed to accept connection: {}", e);
+                        continue;
+                    }
                 }
             } else {
                 let endpoints = self.endpoints.clone();
@@ -52,20 +65,28 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
 
                 debug!("Got event id: {fd}");
 
-                let option = conns.lock().expect("Poisoned").remove(&fd);
+                let option = conns.lock().ok().and_then(|mut conns| conns.remove(&fd));
                 if let Some((conn, conn_status)) = option {
                     if kevent.flags.contains(EventFlag::EV_EOF) || conn_status == ConnState::Flush {
                         drop(conn);
                     } else {
                         let deps_map = self.deps_map.clone();
-                        let result = self
-                            .workers
-                            .queue_with_result(async move { AsyncHandler::handle_async_better(conn, &conn_status, endpoints, deps_map).await })
-                            .expect("Could not retrieve result from future.")
-                            .get();
-                        if let Some((conn, conn_state)) = result {
-                            conns.lock().expect("Poisoned").insert(fd, (conn, conn_state));
-                        }
+                        // Queue the async work without blocking
+                        self.workers
+                            .queue(async move {
+                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, endpoints, deps_map).await {
+                                    if new_state != ConnState::Flush {
+                                        if let Ok(mut conns_lock) = conns.lock() {
+                                            conns_lock.insert(fd, (conn, new_state));
+                                        } else {
+                                            log::error!("Failed to re-insert connection - lock poisoned");
+                                        }
+                                    } else {
+                                        drop(conn);
+                                    }
+                                }
+                            })
+                            .unwrap_or_else(|e| log::error!("Failed to queue async job: {e}"));
                     }
                 }
             }
@@ -86,6 +107,6 @@ fn add_event(kqueue: i32, ident: usize, filter: kqueue_sys::EventFilter, flags: 
     let sock_kevent = kqueue_sys::kevent::new(ident, filter, flags, kqueue_sys::FilterFlag::empty());
     let socket_kevent_result = unsafe { kqueue_sys::kevent(kqueue, &sock_kevent, 1, core::ptr::null_mut(), 0, core::ptr::null()) };
     if socket_kevent_result == -1 {
-        panic!("could not register change event on kqueue for the socket");
+        log::error!("Could not register change event on kqueue for socket {}", ident);
     }
 }

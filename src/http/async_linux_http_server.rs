@@ -43,7 +43,10 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                         Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                        Err(e) => panic!("failed to accept: {}", e),
+                        Err(e) => {
+                            error!("Failed to accept connection: {}", e);
+                            continue;
+                        }
                     }
                 } else {
                     let conns = self.connections.clone();
@@ -81,5 +84,7 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
 
 fn add_event(epoll: i32, fd: i32, events: Events) {
     let event = Event::new(events, fd as _);
-    epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event).unwrap_or_else(|e| panic!("Failed to register interested in epoll fd, reason:\n{e}"));
+    if let Err(e) = epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event) {
+        error!("Failed to register interest in epoll fd {}: {}", fd, e);
+    }
 }
