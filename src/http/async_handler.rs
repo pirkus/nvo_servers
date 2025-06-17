@@ -76,7 +76,13 @@ impl AsyncHandler {
                             HashMap::new(),
                             Arc::new(DepsMap::default()),
                             headers.clone(),
-                            connection.try_clone().unwrap(),
+                            match connection.try_clone() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Failed to clone connection: {}", e);
+                                    return Some((connection, ConnState::Flush));
+                                }
+                            },
                         )
                     }
                     Some(endpoint) => {
@@ -93,7 +99,13 @@ impl AsyncHandler {
                             path_params,
                             deps_map,
                             headers.clone(),
-                            connection.try_clone().unwrap(),
+                            match connection.try_clone() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Failed to clone connection: {}", e);
+                                    return Some((connection, ConnState::Flush));
+                                }
+                            },
                         )
                     }
                 };

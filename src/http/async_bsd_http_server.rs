@@ -10,8 +10,18 @@ use super::async_http_server::{AsyncHttpServer, AsyncHttpServerBuilder, AsyncHtt
 
 impl AsyncHttpServerTrt for AsyncHttpServer {
     fn start_blocking(&self) {
-        let listener = TcpListener::bind(&self.listen_addr).unwrap();
-        listener.set_nonblocking(true).unwrap();
+        let listener = match TcpListener::bind(&self.listen_addr) {
+            Ok(l) => l,
+            Err(e) => {
+                log::error!("Could not start listening on {}: {}", self.listen_addr, e);
+                return;
+            }
+        };
+        
+        if let Err(e) = listener.set_nonblocking(true) {
+            log::error!("Failed to set listener to nonblocking mode: {}", e);
+            return;
+        }
         let kqueue = unsafe { kqueue_sys::kqueue() };
 
         add_event(kqueue, listener.as_raw_fd() as usize, kqueue_sys::EventFilter::EVFILT_READ, kqueue_sys::EventFlag::EV_ADD | kqueue_sys::EventFlag::EV_ENABLE);

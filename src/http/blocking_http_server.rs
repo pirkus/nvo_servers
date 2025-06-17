@@ -21,7 +21,9 @@ pub trait HttpServerTrt {
 
 impl HttpServerTrt for HttpServer {
     fn create_addr(listen_addr: &str, endpoints: HashSet<Handler>) -> ServerResult<HttpServer> {
-        let thread_count = thread::available_parallelism().unwrap().get();
+        let thread_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4); // Default to 4 threads if detection fails
         let workers = Workers::new(thread_count);
         let endpoints = endpoints.into_iter().map(|x| (x.gen_key(), x)).collect();
 
@@ -35,7 +37,9 @@ impl HttpServerTrt for HttpServer {
         if port > 65535 {
             return Err(ServerError::Configuration(format!("Port cannot be higher than 65535, was: {}", port)));
         }
-        let thread_count = thread::available_parallelism().unwrap().get();
+        let thread_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4); // Default to 4 threads if detection fails
         let endpoints = endpoints.into_iter().map(|x| (x.gen_key(), x)).collect();
         let workers = Workers::new(thread_count);
 
@@ -89,7 +93,9 @@ impl HttpServerTrt for HttpServer {
                         contents.len()
                     );
 
-                    stream.write_all(response.as_bytes()).unwrap()
+                    if let Err(e) = stream.write_all(response.as_bytes()) {
+                        error!("Failed to write response: {}", e);
+                    }
                 }
                 Some(endpoint) => {
                     let path_clj = String::from(path);
@@ -97,13 +103,20 @@ impl HttpServerTrt for HttpServer {
                     let method_clj = String::from(method);
                     self.workers
                         .queue_blocking(move || {
-                            // TODO: handle the error
-                            let response_code = endpoint.handle(&mut stream, path_clj.clone()).unwrap();
-                            debug!(
-                                "Handled request for path: '{path_clj}' and method: {method_clj}. {response_code}"
-                            );
+                            match endpoint.handle(&mut stream, path_clj.clone()) {
+                                Ok(response_code) => {
+                                    debug!(
+                                        "Handled request for path: '{path_clj}' and method: {method_clj}. {response_code}"
+                                    );
+                                }
+                                Err(e) => {
+                                    error!("Handler error for path: '{path_clj}' and method: {method_clj}: {e}");
+                                }
+                            }
                         })
-                        .unwrap();
+                        .unwrap_or_else(|e| {
+                            error!("Failed to queue request: {}", e);
+                        });
                     debug!("Queued request for path: '{path}' and method: {method}.");
                 }
             }

@@ -35,7 +35,9 @@ pub struct AsyncHttpServerBuilder {
 
 impl AsyncHttpServerBuilder {
     pub fn new() -> AsyncHttpServerBuilder {
-        let thread_count = thread::available_parallelism().unwrap().get();
+        let thread_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4); // Default to 4 threads if detection fails
         Self {
             listen_addr: "0.0.0.0:9000".to_string(),
             handlers: Default::default(),

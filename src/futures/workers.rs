@@ -79,7 +79,7 @@ impl Workers {
     }
     
     fn get_next_sender(&self) -> &Sender<Arc<ChannelMsg>> {
-        let mut next = self.next_worker.lock().unwrap();
+        let mut next = self.next_worker.lock().expect("Worker selection mutex poisoned");
         let index = *next;
         *next = (*next + 1) % self.senders.len();
         &self.senders[index]

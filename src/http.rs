@@ -74,7 +74,9 @@ impl AsyncRequest {
         // throw away \r\n\r\n which 4 chars
         let mut buf = vec![0u8; 4];
         loop {
-            match self.body.lock().unwrap().read_exact(&mut buf) {
+            let mut body = self.body.lock()
+                .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+            match body.read_exact(&mut buf) {
                 Ok(_) => break,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
@@ -82,12 +84,13 @@ impl AsyncRequest {
             };
         }
 
-        // Headers are now case-insensitive
         if let Some(content_len) = self.headers.content_length() {
             debug!("Request content-length: {content_len}");
             let mut buf = vec![0u8; content_len];
             loop {
-                match self.body.lock().unwrap().read_exact(&mut buf) {
+                let mut body = self.body.lock()
+                    .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+                match body.read_exact(&mut buf) {
                     Ok(_) => break,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
