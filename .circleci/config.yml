@@ -56,8 +56,10 @@ workflows:
     jobs:
       - build:
           filters:
+            branches:
+              only: /.*/  # Run on all branches
             tags:
-              only: /^v.*/
+              only: /^v.*/  # AND also run on v* tags
       - publish:
           requires:
             - build
@@ -65,5 +67,5 @@ workflows:
             tags:
               only: /^v.*/
             branches:
-              ignore: /.*/
+              ignore: /.*/  # Only run on tags, not branches
           context: crates-publish  # Optional: use a context for the token
