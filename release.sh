@@ -6,7 +6,8 @@
 set -euo pipefail
 
 # If a tag is present on HEAD (or provided via RELEASE_TAG/CIRCLE_TAG), use it directly
-HEAD_TAG="${RELEASE_TAG:-${CIRCLE_TAG:-$(git describe --tags --exact-match 2>/dev/null || true)}}"
+# `git tag --points-at HEAD` works for both lightweight and annotated tags
+HEAD_TAG="${RELEASE_TAG:-${CIRCLE_TAG:-$(git tag --points-at HEAD | head -n 1)}}"
 
 if [[ -n "$HEAD_TAG" ]]; then
     # Trim the leading 'v' if present
@@ -55,10 +56,16 @@ sed -i "0,/^version = \".*\"/s//version = \"$NEW_VERSION\"/" Cargo.toml
 echo "Running tests..."
 cargo test
 
-# Commit and tag
-git add Cargo.toml
-git commit -m "Release v$NEW_VERSION"
-git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
+# Commit and tag unless skipped or the tag already exists (useful for CI)
+if [[ "${SKIP_COMMIT:-}" != "true" ]]; then
+    if git rev-parse -q --verify "v$NEW_VERSION" >/dev/null; then
+        echo "Tag v$NEW_VERSION already exists. Skipping commit and tag."
+    else
+        git add Cargo.toml
+        git commit -m "Release v$NEW_VERSION"
+        git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
+    fi
+fi
 
 echo "Release prepared! To publish, run:"
 echo "  git push origin main --tags"

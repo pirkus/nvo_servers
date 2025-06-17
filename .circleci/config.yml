@@ -43,6 +43,9 @@ jobs:
           keys:
             - v1-cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
+          name: Set crate version from tag
+          command: SKIP_COMMIT=true ./release.sh
+      - run:
           name: Verify crate can be packaged
           command: cargo package --allow-dirty
       - run:
