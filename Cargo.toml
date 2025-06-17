@@ -2,6 +2,7 @@
 name = "nvo_servers"
 version = "0.0.1"
 edition = "2021"
+license = "GPL-3.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,6 +11,8 @@ serde = "1.0.210"
 log = "0.4.21"
 env_logger = "0.11.3"
 serde_json = "1.0"
+ureq = { version = "2.9.6", features = ["json"] }
+smallvec = "1.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 epoll = "4.3.3"
@@ -17,6 +20,8 @@ epoll = "4.3.3"
 kqueue-sys = "1.0.4"
 [target.'cfg(target_os = "macos")'.dependencies]
 kqueue-sys = "1.0.4"
+
+[dev-dependencies]
 
 [dev-dependencies.reqwest]
 version = "0.12.8" # until we write our own!

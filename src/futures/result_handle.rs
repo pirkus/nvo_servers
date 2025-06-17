@@ -38,6 +38,20 @@ impl<T> ResultHandle<T> {
         self.is_set.notify_one();
         value
     }
+
+    pub fn try_get(&self) -> Option<T> {
+        let mut data_lock = self.value.lock().expect("poisoned lock");
+        let value = data_lock.take();
+        if value.is_some() {
+            debug!("Value retrieved (non-blocking).");
+            self.is_set.notify_one();
+        }
+        value
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.value.lock().expect("poisoned lock").is_some()
+    }
 }
 
 #[cfg(test)]
@@ -70,5 +84,32 @@ mod tests {
 
         assert_eq!(clone_under_test.get(), number);
         t.join().unwrap();
+    }
+
+    #[test]
+    fn try_get_returns_none_when_not_ready() {
+        let under_test = ResultHandle::<u32>::new();
+        assert_eq!(under_test.try_get(), None);
+    }
+
+    #[test]
+    fn try_get_returns_some_when_ready() {
+        let under_test = ResultHandle::new();
+        let number = utils::poor_mans_random();
+        under_test.set(number);
+        assert_eq!(under_test.try_get(), Some(number));
+    }
+
+    #[test]
+    fn is_ready_works() {
+        let under_test = ResultHandle::new();
+        assert!(!under_test.is_ready());
+        
+        under_test.set(42);
+        assert!(under_test.is_ready());
+        
+        // After get, it should not be ready anymore
+        let _ = under_test.get();
+        assert!(!under_test.is_ready());
     }
 }

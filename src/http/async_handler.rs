@@ -1,22 +1,57 @@
 use crate::typemap::DepsMap;
 
 use super::ConnStream;
-use super::{helpers, response::Response, AsyncRequest, ConnState};
+use super::{headers::Headers, response::Response, AsyncRequest, ConnState};
+use super::path_matcher::PathRouter;
 use crate::futures::catch_unwind::CatchUnwind;
 use log::{debug, error};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
 
+enum WriteResult {
+    Complete,
+    Partial(usize),
+    ConnectionClosed,
+}
+
 pub struct AsyncHandler {
-    pub method: String,
-    pub path: String,
+    pub method: Arc<str>,
+    pub path: Arc<str>,
     pub func: Box<dyn AsyncHandlerFn + Sync>,
 }
 
 impl AsyncHandler {
-    pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, endpoints: HashSet<Arc<AsyncHandler>>, deps_map: Arc<DepsMap>) -> Option<(S, ConnState)>
+    /// Write all bytes using a functional approach
+    fn write_all_bytes<S: ConnStream>(connection: &mut S, data: &[u8], offset: usize) -> WriteResult {
+        if offset >= data.len() {
+            return WriteResult::Complete;
+        }
+
+        match connection.write(&data[offset..]) {
+            Ok(0) => {
+                debug!("client hung up");
+                WriteResult::ConnectionClosed
+            }
+            Ok(n) => {
+                let new_offset = offset + n;
+                if new_offset >= data.len() {
+                    WriteResult::Complete
+                } else {
+                    WriteResult::Partial(new_offset)
+                }
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => WriteResult::Partial(offset),
+            Err(ref err) if err.kind() == io::ErrorKind::InvalidInput => WriteResult::Partial(offset),
+            Err(err) => {
+                error!("Failed to write response: {}", err);
+                WriteResult::ConnectionClosed
+            }
+        }
+    }
+
+    pub async fn handle_async_better<S>(mut connection: S, conn_state: &ConnState, path_router: Arc<PathRouter<Arc<AsyncHandler>>>, deps_map: Arc<DepsMap>) -> Option<(S, ConnState)>
     where
         S: ConnStream,
     {
@@ -32,7 +67,7 @@ impl AsyncHandler {
                         return Some((connection, ConnState::Flush));
                     }
                 }
-                let http_req_size = match from_utf8(&buf).expect("string").find("\r\n\r\n") {
+                let http_req_size = match from_utf8(&buf).ok().and_then(|s| s.find("\r\n\r\n")) {
                     Some(n) => n,
                     None => {
                         error!("Received not an HTTP request.");
@@ -46,7 +81,10 @@ impl AsyncHandler {
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone()))),
                     Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone()))),
-                    Err(e) => panic!("{}", e), // TODO: probably don't wanna blow up here
+                    Err(e) => {
+                        error!("Failed to read request: {}", e);
+                        return Some((connection, ConnState::Flush));
+                    }
                 };
 
                 let raw_req = String::from_utf8_lossy(&buf);
@@ -56,25 +94,15 @@ impl AsyncHandler {
                 let method = first_line[0];
                 let path = first_line[1];
                 let _protocol = first_line[2];
-                let headers = &request[1..]
-                    .iter()
-                    .map(|x| {
-                        if x.contains(':') {
-                            let split = x.split_once(':').unwrap();
-                            (split.0.trim().to_string().to_lowercase(), split.1.trim().to_string().to_lowercase())
-                        } else {
-                            (x.trim().to_string(), "".to_string())
-                        }
-                    })
-                    .collect::<HashMap<String, String>>();
+                let headers = Headers::from_lines(request[1..].iter().copied());
 
                 debug!("http_req_size = {http_req_size}; ");
 
-                let endpoint = endpoints.iter().find(|x| x.method == method && helpers::path_matches_pattern(&x.path, path));
+                let endpoint_result = path_router.find_match(path);
 
                 debug!("Request payload: {:?}", request);
 
-                let req_handler = match endpoint {
+                let req_handler = match endpoint_result {
                     None => {
                         debug!("No handler registered for path: '{path}' and method: {method} not found.");
                         AsyncRequest::create(
@@ -83,19 +111,50 @@ impl AsyncHandler {
                             HashMap::new(),
                             Arc::new(DepsMap::default()),
                             headers.clone(),
-                            connection.try_clone().unwrap(),
+                            match connection.try_clone() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Failed to clone connection: {}", e);
+                                    return Some((connection, ConnState::Flush));
+                                }
+                            },
                         )
                     }
-                    Some(endpoint) => {
-                        debug!("Path: '{path}' and endpoint.path: '{endpoint_path}'", endpoint_path = endpoint.path);
-                        AsyncRequest::create(
-                            path,
-                            endpoint.clone(),
-                            helpers::extract_path_params(&endpoint.path, path),
-                            deps_map,
-                            headers.clone(),
-                            connection.try_clone().unwrap(),
-                        )
+                    Some((endpoint, path_params)) => {
+                        // Check if the method matches
+                        if endpoint.method.as_ref() != method {
+                            debug!("Method mismatch for path: '{path}'. Expected: '{}', got: '{}'", endpoint.method, method);
+                            AsyncRequest::create(
+                                path,
+                                Arc::new(AsyncHandler::not_found(method)),
+                                HashMap::new(),
+                                Arc::new(DepsMap::default()),
+                                headers.clone(),
+                                match connection.try_clone() {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        error!("Failed to clone connection: {}", e);
+                                        return Some((connection, ConnState::Flush));
+                                    }
+                                },
+                            )
+                        } else {
+                            debug!("Path: '{path}' matched endpoint path: '{endpoint_path}'", endpoint_path = endpoint.path);
+                            AsyncRequest::create(
+                                path,
+                                endpoint.clone(),
+                                path_params,
+                                deps_map,
+                                headers.clone(),
+                                match connection.try_clone() {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        error!("Failed to clone connection: {}", e);
+                                        return Some((connection, ConnState::Flush));
+                                    }
+                                },
+                            )
+                        }
                     }
                 };
                 Some((connection, ConnState::Write(req_handler, 0)))
@@ -120,21 +179,14 @@ impl AsyncHandler {
                 let contents = res.response_body;
                 let length = contents.len();
                 let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
-                let response_len = response.len();
-                let mut written = *written_bytes;
-                while written != response_len {
-                    match connection.write(&response.as_bytes()[written..]) {
-                        Ok(0) => {
-                            debug!("client hung up");
-                            return Some((connection, ConnState::Flush));
-                        }
-                        Ok(n) => written += n,
-                        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Write(req.clone(), written))),
-                        Err(ref err) if err.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Write(req.clone(), written))),
-                        Err(err) => panic!("{}", err), // I guess we don't wanna die here ?
-                    }
+                let response_bytes = response.as_bytes();
+                
+                // Functional approach: try to write all remaining bytes
+                match Self::write_all_bytes(&mut connection, response_bytes, *written_bytes) {
+                    WriteResult::Complete => Some((connection, ConnState::Flush)),
+                    WriteResult::Partial(new_written) => Some((connection, ConnState::Write(req.clone(), new_written))),
+                    WriteResult::ConnectionClosed => Some((connection, ConnState::Flush)),
                 }
-                Some((connection, ConnState::Flush))
             }
             ConnState::Flush => {
                 if let Err(msg) = connection.flush() {
@@ -164,8 +216,8 @@ impl std::hash::Hash for AsyncHandler {
 impl AsyncHandler {
     pub fn new(method: &str, path: &str, func: impl AsyncHandlerFn + 'static) -> AsyncHandler {
         AsyncHandler {
-            method: method.to_string(),
-            path: path.to_string(),
+            method: Arc::from(method),
+            path: Arc::from(path),
             func: Box::new(func),
         }
     }
@@ -197,11 +249,13 @@ pub trait AsyncHandlerFn: Send + Sync + 'static {
 mod tests {
     use crate::futures::workers::Workers;
     use crate::http::async_handler::AsyncHandler;
+    use crate::http::headers::Headers;
+    use crate::http::path_matcher::PathRouter;
     use crate::http::response::Response;
     use crate::http::{AsyncRequest, ConnState, ConnStream, Peek, TryClone};
     use crate::typemap::DepsMap;
 
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::{
         cmp::min,
@@ -270,23 +324,22 @@ mod tests {
 
         let handler_clj = handler.clone();
         let conn_clj = conn.clone();
+        
+        // Create a PathRouter and add the handler
+        let mut router = PathRouter::new();
+        router.add_route("/some/:id", handler_clj.clone());
+        let router = Arc::new(router);
+        
         let result =
-            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new()), HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+            workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &ConnState::Read(Vec::new()), router, Arc::new(DepsMap::default())).await });
         let (_conn, conn_state) = result.unwrap().get().unwrap();
-        assert_eq!(
-            conn_state,
-            ConnState::Write(
-                AsyncRequest::create(
-                    "/some/1",
-                    handler.clone(),
-                    HashMap::from([("id".to_string(), "1".to_string())]),
-                    Arc::new(DepsMap::default()),
-                    HashMap::new(),
-                    Arc::new(Mutex::new(conn)),
-                ),
-                0,
-            )
-        );
+        match conn_state {
+            ConnState::Write(req, 0) => {
+                assert_eq!(req.path, "/some/1");
+                assert_eq!(req.path_params.get("id"), Some(&"1".to_string()));
+            }
+            _ => panic!("Expected Write state"),
+        }
 
         workers.poison_all()
     }
@@ -305,19 +358,25 @@ mod tests {
 
         let handler_clj = handler.clone();
         let conn_clj = conn.clone();
+        
+        // Create a PathRouter and add the handler
+        let mut router = PathRouter::new();
+        router.add_route("/some/:id", handler_clj.clone());
+        let router = Arc::new(router);
+        
         let write_state = ConnState::Write(
             AsyncRequest::create(
                 "/some/1",
                 handler.clone(),
                 HashMap::from([("id".to_string(), "1".to_string())]),
                 Arc::new(DepsMap::default()),
-                HashMap::new(),
+                Headers::new(),
                 Arc::new(Mutex::new(conn)),
             ),
             0,
         );
 
-        let result = workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &write_state, HashSet::from([handler_clj]), Arc::new(DepsMap::default())).await });
+        let result = workers.queue_with_result(async move { AsyncHandler::handle_async_better(conn_clj, &write_state, router, Arc::new(DepsMap::default())).await });
         let (conn, _conn_state) = result.unwrap().get().unwrap();
         assert_eq!(
             String::from_utf8(conn.write_data).unwrap(),

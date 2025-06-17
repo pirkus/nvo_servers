@@ -11,6 +11,7 @@ use handler::Handler;
 use log::debug;
 
 use crate::typemap::DepsMap;
+use self::headers::Headers;
 
 #[cfg(any(target_os = "freebsd", target_os = "macos"))]
 pub mod async_bsd_http_server;
@@ -20,10 +21,14 @@ pub mod async_linux_http_server;
 
 pub mod async_handler;
 pub mod blocking_http_server;
+pub mod connection_pool;
 pub mod handler;
+pub mod headers;
 mod helpers;
 pub mod http_status;
+pub mod path_matcher;
 pub mod response;
+pub mod response_builder;
 
 pub trait ConnStream: Read + Write + Peek + TryClone + Send + Sync {}
 
@@ -32,14 +37,16 @@ pub struct Request {
     pub path: String,
     pub endpoint: Handler,
     pub path_params: HashMap<String, String>,
+    pub body: String,
 }
 
 impl Request {
-    pub fn create(path: &str, endpoint: Handler, path_params: HashMap<String, String>) -> Request {
+    pub fn create(path: &str, endpoint: Handler, path_params: HashMap<String, String>, body: String) -> Request {
         Request {
             path: path.to_string(),
             endpoint,
             path_params,
+            body,
         }
     }
 }
@@ -50,12 +57,12 @@ pub struct AsyncRequest {
     pub handler: Arc<AsyncHandler>,
     pub path_params: HashMap<String, String>,
     pub deps: Arc<DepsMap>,
-    pub headers: HashMap<String, String>,
+    pub headers: Headers,
     pub body: Arc<Mutex<dyn ConnStream>>,
 }
 
 impl AsyncRequest {
-    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, headers: HashMap<String, String>, body: Arc<Mutex<dyn ConnStream>>) -> Self {
+    pub fn create(path: &str, handler: Arc<AsyncHandler>, path_params: HashMap<String, String>, deps: Arc<DepsMap>, headers: Headers, body: Arc<Mutex<dyn ConnStream>>) -> Self {
         AsyncRequest {
             path: path.to_string(),
             handler,
@@ -70,31 +77,127 @@ impl AsyncRequest {
         // throw away \r\n\r\n which 4 chars
         let mut buf = vec![0u8; 4];
         loop {
-            match self.body.lock().unwrap().read_exact(&mut buf) {
+            let mut body = self.body.lock()
+                .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+            match body.read_exact(&mut buf) {
                 Ok(_) => break,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                Err(_e) => panic!("Do we want to panic here"),
+                Err(e) => return Err(Error::new(400, &format!("Failed to read request header: {}", e))),
             };
         }
 
-        // TODO: header names to be case insensitive and
-        // TODO: should we handle cases where content length is uknown? check RFC
-        if let Some(content_length) = self.headers.get("content-length") {
-            debug!("Request content-length: {content_length}");
-            let mut buf = vec![0u8; content_length.clone().parse::<usize>().unwrap()];
+        // Check if we have Content-Length
+        if let Some(content_len) = self.headers.content_length() {
+            debug!("Request content-length: {content_len}");
+            let mut buf = vec![0u8; content_len];
             loop {
-                match self.body.lock().unwrap().read_exact(&mut buf) {
+                let mut body = self.body.lock()
+                    .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+                match body.read_exact(&mut buf) {
                     Ok(_) => break,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                    Err(_e) => panic!("Do we want to panic here"),
+                    Err(e) => return Err(Error::new(400, &format!("Failed to read request body: {}", e))),
                 };
             }
-            Ok(String::from_utf8(buf).unwrap())
+            String::from_utf8(buf)
+                .map_err(|_| Error::new(400, "Invalid UTF-8 in request body"))
+        } else if self.headers.get("transfer-encoding")
+            .map(|te| te.to_lowercase().contains("chunked"))
+            .unwrap_or(false) {
+            // Handle chunked transfer encoding
+            self.read_chunked_body().await
         } else {
             Err(Error::new(411, "Missing Content-Length header"))
         }
+    }
+    
+    async fn read_chunked_body(&self) -> Result<String, Error> {
+        let mut body_data = Vec::new();
+        
+        loop {
+            // Read chunk size line
+            let chunk_size_line = self.read_line().await?;
+            
+            // Parse chunk size (hex)
+            let chunk_size = chunk_size_line.trim()
+                .split(';') // Ignore chunk extensions
+                .next()
+                .ok_or_else(|| Error::new(400, "Invalid chunk size"))?
+                .trim();
+            
+            let size = usize::from_str_radix(chunk_size, 16)
+                .map_err(|_| Error::new(400, "Invalid chunk size format"))?;
+            
+            if size == 0 {
+                // Last chunk - read trailing headers if any
+                self.read_line().await?; // Read the final CRLF
+                break;
+            }
+            
+            // Read chunk data
+            let mut chunk = vec![0u8; size];
+            loop {
+                let mut body = self.body.lock()
+                    .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+                match body.read_exact(&mut chunk) {
+                    Ok(_) => break,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
+                    Err(e) => return Err(Error::new(400, &format!("Failed to read chunk data: {}", e))),
+                };
+            }
+            
+            body_data.extend_from_slice(&chunk);
+            
+            // Read trailing CRLF after chunk data
+            let mut crlf = [0u8; 2];
+            loop {
+                let mut body = self.body.lock()
+                    .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+                match body.read_exact(&mut crlf) {
+                    Ok(_) => break,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
+                    Err(e) => return Err(Error::new(400, &format!("Failed to read chunk trailer: {}", e))),
+                };
+            }
+        }
+        
+        String::from_utf8(body_data)
+            .map_err(|_| Error::new(400, "Invalid UTF-8 in chunked body"))
+    }
+    
+    async fn read_line(&self) -> Result<String, Error> {
+        let mut line = Vec::new();
+        let mut prev_byte = 0u8;
+        
+        loop {
+            let mut byte = [0u8; 1];
+            loop {
+                let mut body = self.body.lock()
+                    .map_err(|_| Error::new(500, "Failed to acquire body lock"))?;
+                match body.read_exact(&mut byte) {
+                    Ok(_) => break,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
+                    Err(e) => return Err(Error::new(400, &format!("Failed to read line: {}", e))),
+                };
+            }
+            
+            if prev_byte == b'\r' && byte[0] == b'\n' {
+                // Remove the \r from line
+                line.pop();
+                break;
+            }
+            
+            line.push(byte[0]);
+            prev_byte = byte[0];
+        }
+        
+        String::from_utf8(line)
+            .map_err(|_| Error::new(400, "Invalid UTF-8 in line"))
     }
 }
 
@@ -141,10 +244,10 @@ pub trait TryClone {
     fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>>;
 }
 
-// fuck TcpStream for returning itself on try_clone
 impl TryClone for TcpStream {
     fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>> {
-        Ok(Arc::new(Mutex::new(self.try_clone().unwrap())))
+        self.try_clone()
+            .map(|stream| Arc::new(Mutex::new(stream)) as Arc<Mutex<dyn ConnStream>>)
     }
 }
 
@@ -173,5 +276,93 @@ impl Error {
             title: title.to_string(),
             desc: desc.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http::response::Response;
+    use std::io::Cursor;
+    
+    // Mock ConnStream for testing
+    struct MockStream {
+        data: Cursor<Vec<u8>>,
+    }
+    
+    impl MockStream {
+        fn new(data: &[u8]) -> Arc<Mutex<Self>> {
+            Arc::new(Mutex::new(MockStream {
+                data: Cursor::new(data.to_vec()),
+            }))
+        }
+    }
+    
+    impl Read for MockStream {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.data.read(buf)
+        }
+    }
+    
+    impl Write for MockStream {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+        
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    
+    impl Peek for MockStream {
+        fn peek(&self, _buf: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+    
+    impl TryClone for MockStream {
+        fn try_clone(&self) -> io::Result<Arc<Mutex<dyn ConnStream>>> {
+            Ok(Arc::new(Mutex::new(MockStream {
+                data: Cursor::new(self.data.get_ref().clone()),
+            })) as Arc<Mutex<dyn ConnStream>>)
+        }
+    }
+    
+    impl ConnStream for MockStream {}
+    
+    #[test]
+    fn test_chunked_body_reading() {
+        use crate::futures::workers::Workers;
+        
+        // Create test data with chunked encoding
+        let test_data = b"\r\n\r\n5\r\nHello\r\n6\r\n World\r\n0\r\n\r\n";
+        let stream = MockStream::new(test_data);
+        
+        let mut headers = Headers::new();
+        headers.insert("Transfer-Encoding", "chunked");
+        
+        async fn dummy_handler(_: AsyncRequest) -> Result<Response, String> {
+            Ok(Response::create(200, "".to_string()))
+        }
+        
+        let request = AsyncRequest {
+            path: "/test".to_string(),
+            handler: Arc::new(AsyncHandler::new("GET", "/test", dummy_handler)),
+            path_params: HashMap::new(),
+            deps: Arc::new(DepsMap::default()),
+            headers,
+            body: stream as Arc<Mutex<dyn ConnStream>>,
+        };
+        
+        // Use workers to run the async function
+        let workers = Workers::new(1);
+        let result = workers.queue_with_result(async move {
+            request.body().await
+        });
+        
+        let body = result.unwrap().get().unwrap();
+        assert_eq!(body, "Hello World");
+        
+        workers.poison_all();
     }
 }

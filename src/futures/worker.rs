@@ -15,6 +15,18 @@ pub struct Task {
     pub sender: Sender<Arc<ChannelMsg>>,
 }
 
+impl Task {
+    pub fn new(
+        future: impl Future<Output = ()> + Send + 'static,
+        sender: Sender<Arc<ChannelMsg>>
+    ) -> Self {
+        Self {
+            future: Mutex::new(Some(Box::pin(future))),
+            sender,
+        }
+    }
+}
+
 pub enum ChannelMsg {
     Task(Task),
     Shutdown,
@@ -26,40 +38,52 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn new(name: String, recv: Arc<Mutex<Receiver<Arc<ChannelMsg>>>>) -> Worker {
+    pub(crate) fn new(name: String, recv: Receiver<Arc<ChannelMsg>>) -> Worker {
         let worker_name = name.clone();
-        let thread_handle = thread::spawn(move || loop {
-            match recv.lock().expect("poisoned lock").recv() {
-                Ok(task_ptr) => {
-                    debug!("Executing job. Worker name: {worker_name}");
-                    match task_ptr.deref() {
-                        ChannelMsg::Task(task) => {
-                            let mut future_mutex = task.future.lock().expect("poisoned lock");
-                            if let Some(mut future) = future_mutex.take() {
-                                let waker = Waker::from(task_ptr.clone());
-                                let context = &mut Context::from_waker(&waker);
-                                if future.as_mut().poll(context).is_pending() {
-                                    *future_mutex = Some(future)
-                                }
+        let thread_handle = thread::Builder::new()
+            .name(worker_name.clone())
+            .spawn(move || {
+                std::iter::repeat(())
+                    .map(|_| recv.recv())
+                    .take_while(|result| match result {
+                        Ok(task_ptr) => !matches!(task_ptr.deref(), ChannelMsg::Shutdown),
+                        Err(e) => {
+                            error!("Shutting down. Worker name: {worker_name}, reason {e}");
+                            false
+                        }
+                    })
+                    .for_each(|result| {
+                        if let Ok(task_ptr) = result {
+                            debug!("Executing job. Worker name: {worker_name}");
+                            if let ChannelMsg::Task(task) = task_ptr.deref() {
+                                Self::process_task(task, &task_ptr);
                             }
                         }
-
-                        ChannelMsg::Shutdown => break,
-                    }
-                }
-                Err(e) => {
-                    error!("Shutting down. Worker name: {worker_name}, reason {e}");
-                    break;
-                }
-            }
-        });
+                    });
+            })
+            .expect("Failed to spawn worker thread");
 
         Worker { name, thread_handle }
     }
+    
+    fn process_task(task: &Task, task_ptr: &Arc<ChannelMsg>) {
+        task.future
+            .lock()
+            .ok()
+            .and_then(|mut future_mutex| future_mutex.take())
+            .map(|mut future| {
+                let waker = Waker::from(task_ptr.clone());
+                let context = &mut Context::from_waker(&waker);
+                if future.as_mut().poll(context).is_pending() {
+                    if let Ok(mut future_mutex) = task.future.lock() {
+                        *future_mutex = Some(future);
+                    }
+                }
+            });
+    }
 
-    pub fn gracefully_shutdown(self, sender: Sender<Arc<ChannelMsg>>) {
-        info!("Gracefully shutting down worker {}", self.name);
-        sender.send(Arc::new(ChannelMsg::Shutdown)).unwrap();
+    pub fn join(self) {
+        info!("Waiting for worker {} to finish", self.name);
         self.thread_handle.join().unwrap();
     }
 }
@@ -78,8 +102,7 @@ impl Wake for ChannelMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::Ordering::Relaxed;
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
@@ -87,20 +110,29 @@ mod tests {
     fn worker_can_process_work() {
         static IS_MODIFIED: AtomicBool = AtomicBool::new(false);
         let (sender, recv) = channel::<Arc<ChannelMsg>>();
-        let worker = Worker::new("a-worker".to_string(), Arc::new(Mutex::new(recv)));
-        let boxed_future = Box::pin(async {
-            IS_MODIFIED.swap(true, Relaxed);
-        });
-        let task = ChannelMsg::Task(Task {
-            future: Mutex::new(Some(boxed_future)),
-            sender: sender.clone(),
-        });
-        sender.send(Arc::new(task)).unwrap();
+        let worker = Worker::new("a-worker".to_string(), recv);
+        
+        let task = Task::new(
+            async {
+                IS_MODIFIED.swap(true, Relaxed);
+            },
+            sender.clone()
+        );
+        
+        sender.send(Arc::new(ChannelMsg::Task(task))).unwrap();
 
-        while !IS_MODIFIED.load(Relaxed) {
-            thread::sleep(Duration::from_millis(10));
-        }
+        // Wait for task to complete
+        std::iter::repeat_with(|| IS_MODIFIED.load(Relaxed))
+            .find(|&ready| {
+                if !ready {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                ready
+            })
+            .unwrap();
 
-        worker.gracefully_shutdown(sender)
+        // Send shutdown message and wait for worker to finish
+        sender.send(Arc::new(ChannelMsg::Shutdown)).unwrap();
+        worker.join()
     }
 }
