@@ -144,3 +144,7 @@ ab -n 10000 -c 100 localhost:8090/status
 # Test chunked encoding
 curl -H "Transfer-Encoding: chunked" -d @large_file.txt localhost:8090/echo
 ```
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
