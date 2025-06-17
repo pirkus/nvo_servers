@@ -3,11 +3,12 @@ use crate::http::Request;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Handler {
-    method: String,
-    path: String,
+    method: Arc<str>,
+    path: Arc<str>,
     pub(crate) handler_func: fn(&Request) -> Result<Response, String>,
 }
 
@@ -48,8 +49,8 @@ impl Handler {
 
     pub fn new(path: &str, method: &str, handler_func: fn(&Request) -> Result<Response, String>) -> Handler {
         Handler {
-            path: path.to_string(),
-            method: method.to_string(),
+            path: Arc::from(path),
+            method: Arc::from(method),
             handler_func,
         }
     }
@@ -62,7 +63,7 @@ impl Handler {
 
 impl PartialEq for Handler {
     fn eq(&self, other: &Self) -> bool {
-        self.path.to_lowercase() == other.path.to_lowercase() && self.method.to_lowercase() == other.method.to_lowercase()
+        self.path == other.path && self.method == other.method
     }
 }
 

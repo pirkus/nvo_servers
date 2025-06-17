@@ -102,6 +102,69 @@ impl ResponseBuilder {
             body
         )
     }
+
+    /// Build a chunked HTTP response string
+    pub fn build_chunked_http_string(self, chunks: Vec<String>) -> String {
+        let status_msg = HttpStatus::get_status_msg(self.status_code);
+        let mut headers = self.headers;
+        
+        // Set Transfer-Encoding header
+        headers.insert("Transfer-Encoding", "chunked");
+        
+        // Build response
+        let status_line = format!("HTTP/1.1 {} {}", self.status_code, status_msg);
+        let headers_str: Vec<String> = headers
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect();
+        
+        let mut response = format!(
+            "{}\r\n{}\r\n\r\n",
+            status_line,
+            headers_str.join("\r\n")
+        );
+        
+        // Add chunks
+        for chunk in chunks {
+            let chunk_bytes = chunk.as_bytes();
+            response.push_str(&format!("{:X}\r\n", chunk_bytes.len()));
+            response.push_str(&chunk);
+            response.push_str("\r\n");
+        }
+        
+        // Add final chunk
+        response.push_str("0\r\n\r\n");
+        
+        response
+    }
+    
+    /// Create a chunked response for streaming data
+    pub fn chunked(self) -> ChunkedResponseBuilder {
+        ChunkedResponseBuilder {
+            builder: self,
+            chunks: Vec::new(),
+        }
+    }
+}
+
+/// Builder for chunked responses
+#[derive(Debug, Clone)]
+pub struct ChunkedResponseBuilder {
+    builder: ResponseBuilder,
+    chunks: Vec<String>,
+}
+
+impl ChunkedResponseBuilder {
+    /// Add a chunk to the response
+    pub fn chunk(mut self, data: impl Into<String>) -> Self {
+        self.chunks.push(data.into());
+        self
+    }
+    
+    /// Build the chunked HTTP response string
+    pub fn build_http_string(self) -> String {
+        self.builder.build_chunked_http_string(self.chunks)
+    }
 }
 
 /// Extension trait for functional response creation
@@ -177,5 +240,23 @@ mod tests {
         let response = result.into_response();
         assert_eq!(response.status_code, 500);
         assert!(response.response_body.contains("Something went wrong"));
+    }
+    
+    #[test]
+    fn test_chunked_response_builder() {
+        let chunked_response = ResponseBuilder::ok()
+            .header("Content-Type", "text/plain")
+            .chunked()
+            .chunk("Hello")
+            .chunk(" ")
+            .chunk("World!")
+            .build_http_string();
+
+        assert!(chunked_response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(chunked_response.contains("Transfer-Encoding: chunked"));
+        assert!(chunked_response.contains("5\r\nHello\r\n")); // 5 = "Hello".len() in hex
+        assert!(chunked_response.contains("1\r\n \r\n")); // 1 = " ".len() in hex
+        assert!(chunked_response.contains("6\r\nWorld!\r\n")); // 6 = "World!".len() in hex
+        assert!(chunked_response.ends_with("0\r\n\r\n")); // Final chunk marker
     }
 } 

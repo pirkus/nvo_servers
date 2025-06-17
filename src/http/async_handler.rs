@@ -17,8 +17,8 @@ enum WriteResult {
 }
 
 pub struct AsyncHandler {
-    pub method: String,
-    pub path: String,
+    pub method: Arc<str>,
+    pub path: Arc<str>,
     pub func: Box<dyn AsyncHandlerFn + Sync>,
 }
 
@@ -122,7 +122,7 @@ impl AsyncHandler {
                     }
                     Some((endpoint, path_params)) => {
                         // Check if the method matches
-                        if endpoint.method != method {
+                        if endpoint.method.as_ref() != method {
                             debug!("Method mismatch for path: '{path}'. Expected: '{}', got: '{}'", endpoint.method, method);
                             AsyncRequest::create(
                                 path,
@@ -216,8 +216,8 @@ impl std::hash::Hash for AsyncHandler {
 impl AsyncHandler {
     pub fn new(method: &str, path: &str, func: impl AsyncHandlerFn + 'static) -> AsyncHandler {
         AsyncHandler {
-            method: method.to_string(),
-            path: path.to_string(),
+            method: Arc::from(method),
+            path: Arc::from(path),
             func: Box::new(func),
         }
     }

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use smallvec::SmallVec;
 
 /// Pre-compiled path pattern for efficient matching
 #[derive(Debug, Clone)]
 pub struct CompiledPath {
-    segments: Vec<PathSegment>,
+    segments: SmallVec<[PathSegment; 8]>,
     param_count: usize,
 }
 
@@ -16,7 +17,7 @@ enum PathSegment {
 impl CompiledPath {
     /// Compile a path pattern for efficient reuse
     pub fn new(pattern: &str) -> Self {
-        let segments: Vec<PathSegment> = pattern
+        let segments: SmallVec<[PathSegment; 8]> = pattern
             .split('/')
             .filter(|s| !s.is_empty())
             .map(|segment| {
@@ -38,7 +39,7 @@ impl CompiledPath {
 
     /// Check if a path matches this pattern
     pub fn matches(&self, path: &str) -> bool {
-        let path_segments: Vec<&str> = path
+        let path_segments: SmallVec<[&str; 8]> = path
             .split('/')
             .filter(|s| !s.is_empty())
             .collect();
@@ -58,7 +59,7 @@ impl CompiledPath {
 
     /// Extract parameters from a matching path
     pub fn extract_params(&self, path: &str) -> Option<HashMap<String, String>> {
-        let path_segments: Vec<&str> = path
+        let path_segments: SmallVec<[&str; 8]> = path
             .split('/')
             .filter(|s| !s.is_empty())
             .collect();
