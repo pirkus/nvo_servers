@@ -3,6 +3,13 @@ name = "nvo_servers"
 version = "0.0.1"
 edition = "2021"
 license = "GPL-3.0"
+description = "A high-performance, async HTTP server library with zero panics in production"
+repository = "https://github.com/pirkus/nvo_servers"
+homepage = "https://github.com/pirkus/nvo_servers"
+documentation = "https://docs.rs/nvo_servers"
+readme = "README.md"
+keywords = ["http", "server", "async", "web", "no-panic"]
+categories = ["network-programming", "web-programming::http-server"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
