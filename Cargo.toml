@@ -1,6 +1,6 @@
 [package]
 name = "nvo_servers"
-version = "0.0.1"
+version = "0.1.5"
 edition = "2021"
 license = "GPL-3.0"
 description = "A high-performance, async HTTP server library with zero panics in production"
