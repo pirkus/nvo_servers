@@ -57,7 +57,7 @@ echo "Running tests..."
 cargo test
 
 # Commit and tag unless skipped or the tag already exists (useful for CI)
-if [[ "${SKIP_COMMIT:-}" != "true" ]]; then
+if [[ "${SKIP_COMMIT:-}" != "true" ]] && [[ "${CIRCLE_TAG:-}" == "" ]]; then
     if git rev-parse -q --verify "v$NEW_VERSION" >/dev/null; then
         echo "Tag v$NEW_VERSION already exists. Skipping commit and tag."
     else
@@ -65,6 +65,8 @@ if [[ "${SKIP_COMMIT:-}" != "true" ]]; then
         git commit -m "Release v$NEW_VERSION"
         git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
     fi
+elif [[ "${CIRCLE_TAG:-}" != "" ]]; then
+    echo "Running in CI with tag $CIRCLE_TAG. Skipping local commit and tag creation."
 fi
 
 echo "Release prepared! To publish, run:"

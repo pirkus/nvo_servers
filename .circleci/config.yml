@@ -43,8 +43,21 @@ jobs:
           keys:
             - v1-cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
-          name: Set crate version from tag
-          command: ./release.sh
+          name: Set up git for commits
+          command: |
+            git config user.email "ci@circleci.com"
+            git config user.name "CircleCI"
+            git remote set-url origin https://${GITHUB_TOKEN}@github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git
+      - run:
+          name: Set crate version from tag and commit to main
+          command: |
+            # Run release script to update Cargo.toml
+            ./release.sh
+            # Switch to main branch and commit the version change
+            git checkout main
+            git add Cargo.toml
+            git commit -m "Update version to ${CIRCLE_TAG#v} for release ${CIRCLE_TAG}" || echo "No changes to commit"
+            git push origin main
       - run:
           name: Verify crate can be packaged
           command: cargo package --allow-dirty
