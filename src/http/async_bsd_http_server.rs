@@ -8,6 +8,9 @@ use std::{io, sync::atomic::Ordering};
 
 use super::async_http_server::{AsyncHttpServer, AsyncHttpServerBuilder, AsyncHttpServerTrt};
 
+// Constant for event batch size
+const EVENT_BATCH_SIZE: usize = 64;
+
 impl AsyncHttpServerTrt for AsyncHttpServer {
     fn start_blocking(&self) {
         let listener = match TcpListener::bind(&self.listen_addr) {
@@ -26,80 +29,43 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
 
         add_event(kqueue, listener.as_raw_fd() as usize, kqueue_sys::EventFilter::EVFILT_READ, kqueue_sys::EventFlag::EV_ADD | kqueue_sys::EventFlag::EV_ENABLE);
 
+        // Allocate event buffer once outside the loop
+        let mut events = vec![
+            kqueue_sys::kevent::new(0, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::empty(), kqueue_sys::FilterFlag::empty());
+            EVENT_BATCH_SIZE
+        ];
+
         loop {
             if self.shutdown_requested.load(Ordering::SeqCst) {
                 break;
             }
             self.started.store(true, std::sync::atomic::Ordering::SeqCst);
-            // extract this, the contents does not matter
-            let mut kevent = kqueue_sys::kevent::new(0, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::empty(), kqueue_sys::FilterFlag::empty());
-            let events_number = unsafe { kqueue_sys::kevent(kqueue, core::ptr::null(), 0, &mut kevent, 1, core::ptr::null()) };
+            
+            // Process multiple events at once
+            let events_number = unsafe { 
+                kqueue_sys::kevent(
+                    kqueue, 
+                    core::ptr::null(), 
+                    0, 
+                    events.as_mut_ptr(), 
+                    EVENT_BATCH_SIZE as i32, 
+                    core::ptr::null()
+                ) 
+            };
 
             if events_number == -1 {
-                log::error!("Could not retrieve an event from kqueue");
+                log::error!("Could not retrieve events from kqueue");
                 continue;
             }
 
             debug!("Events count: {events_number}");
 
-            if kevent.ident as i32 == listener.as_raw_fd() {
-                match listener.accept() {
-                    Ok((connection, _)) => {
-                        if let Err(e) = connection.set_nonblocking(true) {
-                            log::error!("Failed to set connection to non-blocking: {}", e);
-                            continue;
-                        }
-                        let fd = connection.as_raw_fd();
-                        add_event(kqueue, fd as usize, kqueue_sys::EventFilter::EVFILT_READ, kqueue_sys::EventFlag::EV_ADD);
-                        add_event(kqueue, fd as usize, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::EV_ADD);
-
-                        let state = ConnState::Read(Vec::new());
-                        debug!("Insert event id: {fd}");
-                        if let Ok(mut conns) = self.connections.lock() {
-                            conns.insert(fd, (connection, state));
-                        } else {
-                            log::error!("Failed to acquire connections lock");
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => continue,
-                    Err(e) => {
-                        log::error!("Failed to accept connection: {}", e);
-                        continue;
-                    }
-                }
-            } else {
-                let path_router = self.path_router.clone();
-                let conns = self.connections.clone();
-                let fd = kevent.ident as i32;
-
-                debug!("Got event id: {fd}");
-
-                let option = conns.lock().ok().and_then(|mut conns| conns.remove(&fd));
-                if let Some((conn, conn_status)) = option {
-                    if kevent.flags.contains(EventFlag::EV_EOF) || conn_status == ConnState::Flush {
-                        drop(conn);
-                    } else {
-                        let deps_map = self.deps_map.clone();
-                        // Queue the async work without blocking
-                        self.workers
-                            .queue(async move {
-                                if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
-                                    if new_state != ConnState::Flush {
-                                        if let Ok(mut conns_lock) = conns.lock() {
-                                            conns_lock.insert(fd, (conn, new_state));
-                                        } else {
-                                            log::error!("Failed to re-insert connection - lock poisoned");
-                                        }
-                                    } else {
-                                        drop(conn);
-                                    }
-                                }
-                            })
-                            .unwrap_or_else(|e| log::error!("Failed to queue async job: {e}"));
-                    }
-                }
-            }
+            // Process all events using functional approach
+            events[..events_number as usize]
+                .iter()
+                .for_each(|kevent| {
+                    self.process_event(kevent, &listener, kqueue);
+                });
         }
     }
 
@@ -110,6 +76,76 @@ impl AsyncHttpServerTrt for AsyncHttpServer {
     fn shutdown_gracefully(self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.workers.poison_all()
+    }
+}
+
+impl AsyncHttpServer {
+    fn process_event(&self, kevent: &kqueue_sys::kevent, listener: &TcpListener, kqueue: i32) {
+        if kevent.ident as i32 == listener.as_raw_fd() {
+            self.handle_new_connection(listener, kqueue);
+        } else {
+            self.handle_existing_connection(kevent);
+        }
+    }
+
+    fn handle_new_connection(&self, listener: &TcpListener, kqueue: i32) {
+        match listener.accept() {
+            Ok((connection, _)) => {
+                if let Err(e) = connection.set_nonblocking(true) {
+                    log::error!("Failed to set connection to non-blocking: {}", e);
+                    return;
+                }
+                let fd = connection.as_raw_fd();
+                add_event(kqueue, fd as usize, kqueue_sys::EventFilter::EVFILT_READ, kqueue_sys::EventFlag::EV_ADD);
+                add_event(kqueue, fd as usize, kqueue_sys::EventFilter::EVFILT_WRITE, kqueue_sys::EventFlag::EV_ADD);
+
+                let state = ConnState::Read(Vec::new());
+                debug!("Insert event id: {fd}");
+                if let Ok(mut conns) = self.connections.lock() {
+                    conns.insert(fd, (connection, state));
+                } else {
+                    log::error!("Failed to acquire connections lock");
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
+            Err(e) if e.kind() == io::ErrorKind::InvalidInput => {},
+            Err(e) => {
+                log::error!("Failed to accept connection: {}", e);
+            }
+        }
+    }
+
+    fn handle_existing_connection(&self, kevent: &kqueue_sys::kevent) {
+        let path_router = self.path_router.clone();
+        let conns = self.connections.clone();
+        let fd = kevent.ident as i32;
+
+        debug!("Got event id: {fd}");
+
+        let option = conns.lock().ok().and_then(|mut conns| conns.remove(&fd));
+        if let Some((conn, conn_status)) = option {
+            if kevent.flags.contains(EventFlag::EV_EOF) || conn_status == ConnState::Flush {
+                drop(conn);
+            } else {
+                let deps_map = self.deps_map.clone();
+                // Queue the async work without blocking
+                self.workers
+                    .queue(async move {
+                        if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
+                            if new_state != ConnState::Flush {
+                                if let Ok(mut conns_lock) = conns.lock() {
+                                    conns_lock.insert(fd, (conn, new_state));
+                                } else {
+                                    log::error!("Failed to re-insert connection - lock poisoned");
+                                }
+                            } else {
+                                drop(conn);
+                            }
+                        }
+                    })
+                    .unwrap_or_else(|e| log::error!("Failed to queue async job: {e}"));
+            }
+        }
     }
 }
 

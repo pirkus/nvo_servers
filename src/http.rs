@@ -22,6 +22,7 @@ pub mod async_linux_http_server;
 pub mod async_handler;
 pub mod blocking_http_server;
 pub mod connection_pool;
+pub mod connection_manager;
 pub mod handler;
 pub mod headers;
 mod helpers;
