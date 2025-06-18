@@ -22,6 +22,7 @@ pub mod async_linux_http_server;
 pub mod async_handler;
 pub mod blocking_http_server;
 pub mod connection_pool;
+pub mod connection_manager;
 pub mod handler;
 pub mod headers;
 mod helpers;
@@ -275,6 +276,16 @@ impl Error {
             status_code,
             title: title.to_string(),
             desc: desc.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.desc.is_empty() {
+            write!(f, "{}: {}", self.status_code, self.title)
+        } else {
+            write!(f, "{}: {} - {}", self.status_code, self.title, self.desc)
         }
     }
 }

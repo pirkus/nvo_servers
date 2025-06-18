@@ -16,6 +16,9 @@ enum WriteResult {
     ConnectionClosed,
 }
 
+const INITIAL_BUFFER_SIZE: usize = 8192;
+const MAX_REQUEST_SIZE: usize = 1_048_576; // 1MB max request size
+
 pub struct AsyncHandler {
     pub method: Arc<str>,
     pub path: Arc<str>,
@@ -23,6 +26,46 @@ pub struct AsyncHandler {
 }
 
 impl AsyncHandler {
+    /// Dynamically read HTTP request with growable buffer
+    async fn read_http_request<S: ConnStream>(connection: &mut S) -> io::Result<Vec<u8>> {
+        let mut buffer = vec![0u8; INITIAL_BUFFER_SIZE];
+        let mut total_read = 0;
+        
+        loop {
+            // Peek to see if we have enough data
+            let peek_size = match connection.peek(&mut buffer[total_read..]) {
+                Ok(n) => n,
+                Err(e) => return Err(e),
+            };
+            
+            // Check if we have the complete headers
+            let search_end = total_read + peek_size;
+            if let Ok(text) = from_utf8(&buffer[..search_end]) {
+                if let Some(header_end) = text.find("\r\n\r\n") {
+                    // Found end of headers, read exact amount
+                    let mut result = vec![0u8; header_end];
+                    connection.read_exact(&mut result)?;
+                    return Ok(result);
+                }
+            }
+            
+            // Need more data - check if we're at buffer limit
+            if search_end >= MAX_REQUEST_SIZE {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "HTTP request headers too large"
+                ));
+            }
+            
+            // Grow buffer if needed
+            if search_end >= buffer.len() {
+                buffer.resize(buffer.len() * 2, 0);
+            }
+            
+            total_read = search_end;
+        }
+    }
+
     /// Write all bytes using a functional approach
     fn write_all_bytes<S: ConnStream>(connection: &mut S, data: &[u8], offset: usize) -> WriteResult {
         if offset >= data.len() {
@@ -57,37 +100,23 @@ impl AsyncHandler {
     {
         match conn_state {
             ConnState::Read(req) => {
-                let mut buf = [0u8; 8192];
-                match connection.peek(&mut buf) {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone()))),
-                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone()))),
+                // Dynamic buffer sizing implementation
+                let request_data = match Self::read_http_request(&mut connection).await {
+                    Ok(data) => data,
                     Err(e) => {
-                        error!("Unpeekable stream. Error: {e}");
-                        return Some((connection, ConnState::Flush));
-                    }
-                }
-                let http_req_size = match from_utf8(&buf).ok().and_then(|s| s.find("\r\n\r\n")) {
-                    Some(n) => n,
-                    None => {
-                        error!("Received not an HTTP request.");
-                        return Some((connection, ConnState::Flush));
-                    }
-                };
-                let mut buf = vec![0u8; http_req_size];
-                match connection.read_exact(&mut buf) {
-                    Ok(()) => {
-                        debug!("Read http req.");
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Some((connection, ConnState::Read(req.clone()))),
-                    Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Some((connection, ConnState::Read(req.clone()))),
-                    Err(e) => {
-                        error!("Failed to read request: {}", e);
-                        return Some((connection, ConnState::Flush));
+                        match e.kind() {
+                            io::ErrorKind::WouldBlock | io::ErrorKind::InvalidInput => {
+                                return Some((connection, ConnState::Read(req.clone())));
+                            }
+                            _ => {
+                                error!("Failed to read HTTP request: {}", e);
+                                return Some((connection, ConnState::Flush));
+                            }
+                        }
                     }
                 };
 
-                let raw_req = String::from_utf8_lossy(&buf);
+                let raw_req = String::from_utf8_lossy(&request_data);
                 let request: Vec<&str> = raw_req.split('\n').collect();
 
                 let first_line: Vec<&str> = request[0].split(' ').collect();
@@ -96,7 +125,7 @@ impl AsyncHandler {
                 let _protocol = first_line[2];
                 let headers = Headers::from_lines(request[1..].iter().copied());
 
-                debug!("http_req_size = {http_req_size}; ");
+                debug!("http_req_size = {}; ", request_data.len());
 
                 let endpoint_result = path_router.find_match(path);
 
