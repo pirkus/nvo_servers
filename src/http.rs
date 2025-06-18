@@ -280,6 +280,16 @@ impl Error {
     }
 }
 
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.desc.is_empty() {
+            write!(f, "{}: {}", self.status_code, self.title)
+        } else {
+            write!(f, "{}: {} - {}", self.status_code, self.title, self.desc)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

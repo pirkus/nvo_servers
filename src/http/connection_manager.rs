@@ -4,7 +4,6 @@ use std::net::TcpStream;
 use std::io;
 use log::{error, debug};
 use super::ConnState;
-use crate::http::AsyncRequest;
 
 /// Thread-safe connection manager that handles connection lifecycle
 pub struct ConnectionManager {
