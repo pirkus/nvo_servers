@@ -1,6 +1,6 @@
 use crate::futures::workers::Workers;
 use crate::typemap::DepsMap;
-use dashmap::DashMap;
+use crate::concurrent::FuncMap;
 use std::collections::HashSet;
 use std::net::TcpStream;
 use std::sync::atomic::AtomicBool;
@@ -20,7 +20,7 @@ pub struct AsyncHttpServer {
     pub listen_addr: String,
     pub path_router: Arc<PathRouter<Arc<AsyncHandler>>>,
     pub workers: Workers,
-    pub connections: Arc<DashMap<i32, (TcpStream, ConnState)>>,
+    pub connections: Arc<FuncMap<i32, (TcpStream, ConnState)>>,
     pub started: Arc<AtomicBool>,
     pub shutdown_requested: Arc<AtomicBool>,
     pub deps_map: Arc<DepsMap>,
@@ -111,7 +111,10 @@ impl AsyncHttpServerBuilder {
             }
         );
 
-        let num_workers = self.custom_num_workers.unwrap_or(num_cpus::get());
+        let num_workers = self.custom_num_workers
+            .unwrap_or_else(|| thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4));
         let listen_addr = format!(
             "{}:{}",
             self.addr.unwrap_or_else(|| "127.0.0.1".to_string()),
@@ -121,7 +124,7 @@ impl AsyncHttpServerBuilder {
         AsyncHttpServer {
             listen_addr,
             workers: Workers::new(num_workers),
-            connections: Arc::new(DashMap::new()),
+            connections: Arc::new(FuncMap::new()),
             path_router: Arc::new(path_router),
             deps_map: Arc::new(deps_map),
             started: Arc::new(AtomicBool::new(false)),

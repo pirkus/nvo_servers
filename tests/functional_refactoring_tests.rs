@@ -1,6 +1,7 @@
 use nvo_servers::http::async_http_server::{AsyncHttpServerBuilder, AsyncHttpServerTrt};
 use nvo_servers::http::async_handler::AsyncHandler;
 use nvo_servers::http::response::Response;
+use nvo_servers::concurrent::FuncMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -95,11 +96,8 @@ fn test_iterator_based_processing() {
 /// Test that shared state uses functional concurrency patterns
 #[test]
 fn test_functional_concurrency() {
-    use std::sync::Arc;
-    use dashmap::DashMap;
-    
-    // Use DashMap for functional concurrent access
-    let connections: Arc<DashMap<i32, String>> = Arc::new(DashMap::new());
+    // Use FuncMap for functional concurrent access
+    let connections: Arc<FuncMap<i32, String>> = Arc::new(FuncMap::new());
     
     // Multiple threads can safely access without explicit locking
     let handles: Vec<_> = (0..5)

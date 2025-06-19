@@ -102,9 +102,9 @@ impl AsyncHttpServer {
     }
 
     fn handle_existing_connection(&self, fd: i32) {
-        let conns = self.connections.clone();
-        let option = conns.remove(&fd).map(|(_, value)| value);
+        let option = self.connections.remove(&fd);
         let deps_map = self.deps_map.clone();
+        let conns = self.connections.clone();
 
         if let Some((conn, conn_status)) = option {
             let path_router = self.path_router.clone();

@@ -119,8 +119,8 @@ impl AsyncHttpServer {
 
         debug!("Got event id: {fd}");
 
-        // Use DashMap's remove - returns Option without explicit locking
-        let option = conns.remove(&fd).map(|(_, value)| value);
+        // Use FuncMap's remove - returns Option without explicit locking
+        let option = conns.remove(&fd);
         if let Some((conn, conn_status)) = option {
             if kevent.flags.contains(EventFlag::EV_EOF) || conn_status == ConnState::Flush {
                 drop(conn);
@@ -131,7 +131,7 @@ impl AsyncHttpServer {
                     .queue(async move {
                         if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
                             if new_state != ConnState::Flush {
-                                // Re-insert using DashMap - no explicit locking
+                                // Re-insert using FuncMap - no explicit locking
                                 conns.insert(fd, (conn, new_state));
                             } else {
                                 drop(conn);

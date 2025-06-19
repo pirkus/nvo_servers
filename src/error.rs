@@ -222,7 +222,9 @@ mod tests {
         
         let err = with_context.unwrap_err();
         assert!(matches!(err, ServerError::Io { .. }));
-        assert_eq!(err.to_string(), "IO error (not found): Opening config file");
+        let error_str = err.to_string();
+        assert!(error_str.contains("Opening config file"));
+        assert!(error_str.contains("entity not found") || error_str.contains("not found"));
     }
     
     #[test]

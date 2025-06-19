@@ -1,18 +1,16 @@
 use std::net::TcpStream;
-use std::sync::Arc;
-use dashmap::DashMap;
+use crate::concurrent::FuncMap;
 use super::ConnState;
 
 /// Functional connection manager using lock-free concurrent data structures
-#[derive(Clone)]
 pub struct ConnectionManager {
-    connections: Arc<DashMap<i32, (TcpStream, ConnState)>>,
+    connections: FuncMap<i32, (TcpStream, ConnState)>,
 }
 
 impl ConnectionManager {
     pub fn new() -> Self {
         ConnectionManager {
-            connections: Arc::new(DashMap::new()),
+            connections: FuncMap::new(),
         }
     }
     
@@ -23,7 +21,7 @@ impl ConnectionManager {
     
     /// Take a connection for processing - returns Option without explicit locking
     pub fn take(&self, fd: i32) -> Option<(TcpStream, ConnState)> {
-        self.connections.remove(&fd).map(|(_, value)| value)
+        self.connections.remove(&fd)
     }
     
     /// Return a connection after processing - functional update
@@ -35,7 +33,7 @@ impl ConnectionManager {
     
     /// Remove a connection completely
     pub fn remove(&self, fd: i32) -> Option<(TcpStream, ConnState)> {
-        self.connections.remove(&fd).map(|(_, value)| value)
+        self.connections.remove(&fd)
     }
     
     /// Get the number of active connections
@@ -53,24 +51,8 @@ impl ConnectionManager {
     where
         F: Fn(&i32, &(TcpStream, ConnState)) -> bool,
     {
-        // Collect connections to remove using functional approach
-        let to_remove: Vec<i32> = self.connections
-            .iter()
-            .filter_map(|entry| {
-                if predicate(entry.key(), entry.value()) {
-                    Some(*entry.key())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        
-        // Remove collected connections
-        to_remove.iter()
-            .filter_map(|fd| self.connections.remove(fd))
-            .count();
-        
-        to_remove
+        // Use retain_with which returns the keys that were removed
+        self.connections.retain_with(|k, v| !predicate(k, v))
     }
 }
 
@@ -84,12 +66,6 @@ impl Default for ConnectionManager {
 mod tests {
     use super::*;
     use std::net::{TcpListener, TcpStream};
-    use crate::http::AsyncRequest;
-    use crate::http::async_handler::AsyncHandler;
-    use crate::http::headers::Headers;
-    use crate::typemap::DepsMap;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
     
     fn create_test_connection() -> TcpStream {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

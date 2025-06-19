@@ -1,7 +1,7 @@
 use std::net::TcpStream;
-use std::sync::Arc;
-use dashmap::DashMap;
+use crate::concurrent::FuncMap;
 use std::time::{Duration, Instant};
+use std::sync::Arc;
 use log::debug;
 
 /// Connection wrapper with metadata for pool management
@@ -12,11 +12,10 @@ struct PooledConnection {
 }
 
 /// Functional connection pool for reusing TCP connections
-#[derive(Clone)]
 pub struct ConnectionPool {
-    // Using DashMap for lock-free concurrent access
+    // Using FuncMap for concurrent access
     // Key is a connection ID, value is the pooled connection
-    connections: Arc<DashMap<u64, PooledConnection>>,
+    connections: FuncMap<u64, PooledConnection>,
     next_id: Arc<std::sync::atomic::AtomicU64>,
     max_idle_time: Duration,
 }
@@ -30,7 +29,7 @@ impl ConnectionPool {
     /// Create a pool with custom idle timeout
     pub fn with_max_idle_time(max_idle_time: Duration) -> Self {
         ConnectionPool {
-            connections: Arc::new(DashMap::new()),
+            connections: FuncMap::new(),
             next_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             max_idle_time,
         }
@@ -41,26 +40,9 @@ impl ConnectionPool {
         let now = Instant::now();
         
         // Find and remove the first valid connection functionally
-        self.connections
-            .iter()
-            .find_map(|entry| {
-                let id = *entry.key();
-                let conn = entry.value();
-                
-                // Check if connection is still fresh
-                if now.duration_since(conn.last_used) < self.max_idle_time {
-                    // Try to remove and return it
-                    self.connections.remove(&id)
-                        .and_then(|(_, mut pooled)| {
-                            pooled.last_used = now;
-                            Some(pooled.stream)
-                        })
-                } else {
-                    // Connection is stale, remove it
-                    self.connections.remove(&id);
-                    None
-                }
-            })
+        self.connections.find_remove(|_, conn| {
+            now.duration_since(conn.last_used) < self.max_idle_time
+        }).map(|(_, pooled)| pooled.stream)
     }
     
     /// Return a connection to the pool
@@ -79,22 +61,10 @@ impl ConnectionPool {
     pub fn cleanup(&self) {
         let now = Instant::now();
         
-        // Collect and remove stale connections functionally
-        let stale_ids: Vec<u64> = self.connections
-            .iter()
-            .filter_map(|entry| {
-                if now.duration_since(entry.value().last_used) > self.max_idle_time {
-                    Some(*entry.key())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        
-        // Remove stale connections
-        let removed_count = stale_ids.iter()
-            .filter_map(|id| self.connections.remove(id))
-            .count();
+        // Remove stale connections functionally
+        let removed_count = self.connections.retain_with(|_, conn| {
+            now.duration_since(conn.last_used) <= self.max_idle_time
+        }).len();
             
         if removed_count > 0 {
             debug!("Cleaned up {} stale connections", removed_count);
@@ -167,7 +137,7 @@ mod tests {
     
     #[test]
     fn test_concurrent_access() {
-        let pool = Arc::new(ConnectionPool::new());
+        let pool = std::sync::Arc::new(ConnectionPool::new());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         
