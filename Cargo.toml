@@ -15,18 +15,20 @@ categories = ["network-programming", "web-programming::http-server"]
 
 [dependencies]
 serde = "1.0.210"
-log = "0.4.21"
+log = "0.4"
 env_logger = "0.11.3"
 serde_json = "1.0"
 ureq = { version = "2.9.6", features = ["json"] }
 smallvec = "1.13"
+futures = "0.3.17"
+dashmap = "5.5"
+num_cpus = "1.16"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 epoll = "4.3.3"
-[target.'cfg(target_os = "freebsd")'.dependencies]
-kqueue-sys = "1.0.4"
-[target.'cfg(target_os = "macos")'.dependencies]
-kqueue-sys = "1.0.4"
+
+[target.'cfg(any(target_os = "freebsd", target_os = "macos"))'.dependencies]
+kqueue-sys = "1.0.3"
 
 [dev-dependencies]
 

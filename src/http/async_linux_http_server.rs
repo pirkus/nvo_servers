@@ -91,11 +91,7 @@ impl AsyncHttpServer {
                 let fd = connection.as_raw_fd();
                 add_event(epoll, fd, Events::EPOLLIN | Events::EPOLLOUT);
                 let state = ConnState::Read(Vec::new());
-                if let Ok(mut conns) = self.connections.lock() {
-                    conns.insert(fd, (connection, state));
-                } else {
-                    error!("Failed to acquire connections lock");
-                }
+                self.connections.insert(fd, (connection, state));
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
             Err(e) if e.kind() == io::ErrorKind::InvalidInput => {},
@@ -107,7 +103,7 @@ impl AsyncHttpServer {
 
     fn handle_existing_connection(&self, fd: i32) {
         let conns = self.connections.clone();
-        let option = conns.lock().ok().and_then(|mut conns| conns.remove(&fd));
+        let option = conns.remove(&fd).map(|(_, value)| value);
         let deps_map = self.deps_map.clone();
 
         if let Some((conn, conn_status)) = option {
@@ -116,11 +112,7 @@ impl AsyncHttpServer {
                 .queue(async move {
                     if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
                         if new_state != ConnState::Flush {
-                            if let Ok(mut conns_lock) = conns.lock() {
-                                conns_lock.insert(fd, (conn, new_state));
-                            } else {
-                                error!("Failed to re-insert connection - lock poisoned");
-                            }
+                            conns.insert(fd, (conn, new_state));
                         } else {
                             drop(conn)
                         }

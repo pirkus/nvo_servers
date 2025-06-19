@@ -1,125 +1,76 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::net::TcpStream;
-use std::io;
-use log::{error, debug};
+use std::sync::Arc;
+use dashmap::DashMap;
 use super::ConnState;
 
-/// Thread-safe connection manager that handles connection lifecycle
+/// Functional connection manager using lock-free concurrent data structures
+#[derive(Clone)]
 pub struct ConnectionManager {
-    connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
+    connections: Arc<DashMap<i32, (TcpStream, ConnState)>>,
 }
 
 impl ConnectionManager {
     pub fn new() -> Self {
-        Self {
-            connections: Arc::new(Mutex::new(HashMap::new())),
+        ConnectionManager {
+            connections: Arc::new(DashMap::new()),
         }
     }
-
-    /// Insert a new connection with initial state
-    pub fn insert(&self, fd: i32, connection: TcpStream, state: ConnState) -> Result<(), io::Error> {
-        match self.connections.lock() {
-            Ok(mut conns) => {
-                conns.insert(fd, (connection, state));
-                debug!("Inserted connection with fd: {}", fd);
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to acquire lock for insert: {}", e);
-                Err(io::Error::new(io::ErrorKind::Other, "Lock poisoned"))
-            }
-        }
+    
+    /// Insert a new connection - functional approach with no explicit locking
+    pub fn insert(&self, fd: i32, connection: TcpStream, state: ConnState) {
+        self.connections.insert(fd, (connection, state));
     }
-
-    /// Take a connection for processing
+    
+    /// Take a connection for processing - returns Option without explicit locking
     pub fn take(&self, fd: i32) -> Option<(TcpStream, ConnState)> {
-        match self.connections.lock() {
-            Ok(mut conns) => {
-                let result = conns.remove(&fd);
-                if result.is_some() {
-                    debug!("Took connection with fd: {}", fd);
-                }
-                result
-            }
-            Err(e) => {
-                error!("Failed to acquire lock for take: {}", e);
-                None
-            }
+        self.connections.remove(&fd).map(|(_, value)| value)
+    }
+    
+    /// Return a connection after processing - functional update
+    pub fn return_connection(&self, fd: i32, connection: TcpStream, state: ConnState) {
+        if state != ConnState::Flush {
+            self.connections.insert(fd, (connection, state));
         }
     }
-
-    /// Return a connection after processing with new state
-    pub fn return_connection(&self, fd: i32, connection: TcpStream, state: ConnState) -> Result<(), io::Error> {
-        match self.connections.lock() {
-            Ok(mut conns) => {
-                // Check if connection wasn't already removed (e.g., due to error)
-                if !conns.contains_key(&fd) {
-                    conns.insert(fd, (connection, state));
-                    debug!("Returned connection with fd: {}", fd);
-                    Ok(())
-                } else {
-                    error!("Connection {} already exists, possible race condition", fd);
-                    Err(io::Error::new(io::ErrorKind::AlreadyExists, "Connection already exists"))
-                }
-            }
-            Err(e) => {
-                error!("Failed to acquire lock for return: {}", e);
-                Err(io::Error::new(io::ErrorKind::Other, "Lock poisoned"))
-            }
-        }
-    }
-
-    /// Remove a connection permanently
+    
+    /// Remove a connection completely
     pub fn remove(&self, fd: i32) -> Option<(TcpStream, ConnState)> {
-        match self.connections.lock() {
-            Ok(mut conns) => {
-                let result = conns.remove(&fd);
-                if result.is_some() {
-                    debug!("Removed connection with fd: {}", fd);
-                }
-                result
-            }
-            Err(e) => {
-                error!("Failed to acquire lock for remove: {}", e);
-                None
-            }
-        }
+        self.connections.remove(&fd).map(|(_, value)| value)
     }
-
-    /// Get the current number of connections
-    pub fn connection_count(&self) -> usize {
-        match self.connections.lock() {
-            Ok(conns) => conns.len(),
-            Err(_) => 0,
-        }
+    
+    /// Get the number of active connections
+    pub fn len(&self) -> usize {
+        self.connections.len()
     }
-
-    /// Clean up connections based on a predicate
-    pub fn cleanup_connections<F>(&self, mut predicate: F) -> Vec<i32>
+    
+    /// Check if there are no connections
+    pub fn is_empty(&self) -> bool {
+        self.connections.is_empty()
+    }
+    
+    /// Clean up connections based on a predicate - functional approach
+    pub fn cleanup_connections<F>(&self, predicate: F) -> Vec<i32>
     where
-        F: FnMut(&ConnState) -> bool,
+        F: Fn(&i32, &(TcpStream, ConnState)) -> bool,
     {
-        match self.connections.lock() {
-            Ok(mut conns) => {
-                let to_remove: Vec<i32> = conns
-                    .iter()
-                    .filter(|(_, (_, state))| predicate(state))
-                    .map(|(fd, _)| *fd)
-                    .collect();
-                
-                for fd in &to_remove {
-                    conns.remove(fd);
+        // Collect connections to remove using functional approach
+        let to_remove: Vec<i32> = self.connections
+            .iter()
+            .filter_map(|entry| {
+                if predicate(entry.key(), entry.value()) {
+                    Some(*entry.key())
+                } else {
+                    None
                 }
-                
-                debug!("Cleaned up {} connections", to_remove.len());
-                to_remove
-            }
-            Err(e) => {
-                error!("Failed to acquire lock for cleanup: {}", e);
-                Vec::new()
-            }
-        }
+            })
+            .collect();
+        
+        // Remove collected connections
+        to_remove.iter()
+            .filter_map(|fd| self.connections.remove(fd))
+            .count();
+        
+        to_remove
     }
 }
 
@@ -132,76 +83,69 @@ impl Default for ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use crate::http::AsyncRequest;
-
-    #[test]
-    fn test_connection_lifecycle() {
-        let manager = ConnectionManager::new();
-        
-        // Create a dummy connection
+    use crate::http::async_handler::AsyncHandler;
+    use crate::http::headers::Headers;
+    use crate::typemap::DepsMap;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    
+    fn create_test_connection() -> TcpStream {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let stream = TcpStream::connect(addr).unwrap();
-        let fd = 1;
-        
-        // Test insert
-        assert!(manager.insert(fd, stream.try_clone().unwrap(), ConnState::Read(vec![])).is_ok());
-        assert_eq!(manager.connection_count(), 1);
-        
-        // Test take
-        let taken = manager.take(fd);
-        assert!(taken.is_some());
-        assert_eq!(manager.connection_count(), 0);
-        
-        // Test return - create a dummy request for Write state
-        let (conn, _) = taken.unwrap();
-        
-        // Create a mock handler function
-        async fn dummy_handler(_: AsyncRequest) -> Result<crate::http::response::Response, String> {
-            Ok(crate::http::response::Response::create(200, "OK".to_string()))
-        }
-        
-        let handler = Arc::new(crate::http::AsyncHandler::new("GET", "/", dummy_handler));
-        let dummy_req = AsyncRequest::create(
-            "/",
-            handler,
-            std::collections::HashMap::new(),
-            Arc::new(crate::typemap::DepsMap::default()),
-            crate::http::headers::Headers::new(),
-            Arc::new(std::sync::Mutex::new(conn.try_clone().unwrap())),
-        );
-        
-        assert!(manager.return_connection(fd, conn, ConnState::Write(dummy_req, 0)).is_ok());
-        assert_eq!(manager.connection_count(), 1);
-        
-        // Test remove
-        let removed = manager.remove(fd);
-        assert!(removed.is_some());
-        assert_eq!(manager.connection_count(), 0);
+        TcpStream::connect(addr).unwrap()
     }
-
+    
+    #[test]
+    fn test_connection_insert_and_take() {
+        let manager = ConnectionManager::new();
+        let conn = create_test_connection();
+        
+        manager.insert(1, conn, ConnState::Read(Vec::new()));
+        assert_eq!(manager.len(), 1);
+        
+        let taken = manager.take(1);
+        assert!(taken.is_some());
+        assert_eq!(manager.len(), 0);
+    }
+    
+    #[test]
+    fn test_connection_return() {
+        let manager = ConnectionManager::new();
+        let conn = create_test_connection();
+        
+        // Test return with non-Flush state
+        manager.return_connection(1, conn, ConnState::Read(Vec::new()));
+        assert_eq!(manager.len(), 1);
+        
+        // Test return with Flush state (should not insert)
+        let conn2 = create_test_connection();
+        manager.return_connection(2, conn2, ConnState::Flush);
+        assert_eq!(manager.len(), 1);
+    }
+    
     #[test]
     fn test_cleanup_connections() {
         let manager = ConnectionManager::new();
         
-        // Add some connections
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        
-        for i in 0..5 {
-            let stream = TcpStream::connect(addr).unwrap();
+        // Add multiple connections
+        (0..5).for_each(|i| {
+            let conn = create_test_connection();
             let state = if i % 2 == 0 {
                 ConnState::Flush
             } else {
-                ConnState::Read(vec![])
+                ConnState::Read(Vec::new())
             };
-            manager.insert(i, stream, state).unwrap();
-        }
+            manager.insert(i, conn, state);
+        });
         
-        // Clean up flush connections
-        let cleaned = manager.cleanup_connections(|state| matches!(state, ConnState::Flush));
-        assert_eq!(cleaned.len(), 3); // 0, 2, 4
-        assert_eq!(manager.connection_count(), 2);
+        // Clean up connections in Flush state
+        let removed = manager.cleanup_connections(|_, (_, state)| {
+            matches!(state, ConnState::Flush)
+        });
+        
+        assert_eq!(removed.len(), 3); // 0, 2, 4 are Flush
+        assert_eq!(manager.len(), 2);
     }
 }

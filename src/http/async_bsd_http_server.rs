@@ -101,11 +101,8 @@ impl AsyncHttpServer {
 
                 let state = ConnState::Read(Vec::new());
                 debug!("Insert event id: {fd}");
-                if let Ok(mut conns) = self.connections.lock() {
-                    conns.insert(fd, (connection, state));
-                } else {
-                    log::error!("Failed to acquire connections lock");
-                }
+                // Use DashMap - no explicit locking needed
+                self.connections.insert(fd, (connection, state));
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
             Err(e) if e.kind() == io::ErrorKind::InvalidInput => {},
@@ -122,7 +119,8 @@ impl AsyncHttpServer {
 
         debug!("Got event id: {fd}");
 
-        let option = conns.lock().ok().and_then(|mut conns| conns.remove(&fd));
+        // Use DashMap's remove - returns Option without explicit locking
+        let option = conns.remove(&fd).map(|(_, value)| value);
         if let Some((conn, conn_status)) = option {
             if kevent.flags.contains(EventFlag::EV_EOF) || conn_status == ConnState::Flush {
                 drop(conn);
@@ -133,11 +131,8 @@ impl AsyncHttpServer {
                     .queue(async move {
                         if let Some((conn, new_state)) = AsyncHandler::handle_async_better(conn, &conn_status, path_router, deps_map).await {
                             if new_state != ConnState::Flush {
-                                if let Ok(mut conns_lock) = conns.lock() {
-                                    conns_lock.insert(fd, (conn, new_state));
-                                } else {
-                                    log::error!("Failed to re-insert connection - lock poisoned");
-                                }
+                                // Re-insert using DashMap - no explicit locking
+                                conns.insert(fd, (conn, new_state));
                             } else {
                                 drop(conn);
                             }

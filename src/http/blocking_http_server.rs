@@ -35,14 +35,19 @@ impl HttpServerTrt for HttpServer {
         });
 
         let listener = TcpListener::bind(listen_addr)
-            .map_err(|e| ServerError::Io(format!("Could not start listening on {}: {}", listen_addr, e)))?;
+            .map_err(|e| ServerError::io(
+                format!("Could not start listening on {}", listen_addr),
+                e.kind()
+            ))?;
 
         Ok(HttpServer { path_router, workers, listener })
     }
 
     fn create_port(port: u32, endpoints: HashSet<Handler>) -> ServerResult<HttpServer> {
         if port > 65535 {
-            return Err(ServerError::Configuration(format!("Port cannot be higher than 65535, was: {}", port)));
+            return Err(ServerError::Config {
+                context: format!("Port cannot be higher than 65535, was: {}", port),
+            });
         }
         let thread_count = thread::available_parallelism()
             .map(|n| n.get())
@@ -59,7 +64,10 @@ impl HttpServerTrt for HttpServer {
         let listen_addr = format!("0.0.0.0:{port}");
 
         let listener = TcpListener::bind(&listen_addr)
-            .map_err(|e| ServerError::Io(format!("Could not start listening on {}: {}", listen_addr, e)))?;
+            .map_err(|e| ServerError::io(
+                format!("Could not start listening on {}", listen_addr),
+                e.kind()
+            ))?;
 
         info!("Starting HTTP server on: {listen_addr}");
         Ok(HttpServer { path_router, workers, listener })

@@ -1,12 +1,12 @@
-use std::{
-    any::Any,
-    collections::{HashMap, HashSet},
-    net::TcpStream,
-    sync::{atomic::AtomicBool, Arc, Mutex},
-    thread,
-};
-
-use crate::{futures::workers::Workers, typemap::DepsMap};
+use crate::futures::workers::Workers;
+use crate::typemap::DepsMap;
+use dashmap::DashMap;
+use std::collections::HashSet;
+use std::net::TcpStream;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::thread;
+use std::{any::Any, default::Default};
 
 use super::{async_handler::AsyncHandler, path_matcher::PathRouter, ConnState};
 
@@ -20,17 +20,18 @@ pub struct AsyncHttpServer {
     pub listen_addr: String,
     pub path_router: Arc<PathRouter<Arc<AsyncHandler>>>,
     pub workers: Workers,
-    pub connections: Arc<Mutex<HashMap<i32, (TcpStream, ConnState)>>>,
-    pub started: AtomicBool,
-    pub shutdown_requested: AtomicBool,
+    pub connections: Arc<DashMap<i32, (TcpStream, ConnState)>>,
+    pub started: Arc<AtomicBool>,
+    pub shutdown_requested: Arc<AtomicBool>,
     pub deps_map: Arc<DepsMap>,
 }
 
 pub struct AsyncHttpServerBuilder {
-    listen_addr: String,
+    addr: Option<String>,
+    port: Option<usize>,
     handlers: HashSet<AsyncHandler>,
-    workers_number: usize,
-    deps_map: DepsMap,
+    deps: Vec<Box<dyn Any + Sync + Send>>,
+    custom_num_workers: Option<usize>,
 }
 
 impl AsyncHttpServerBuilder {
@@ -39,74 +40,92 @@ impl AsyncHttpServerBuilder {
             .map(|n| n.get())
             .unwrap_or(4); // Default to 4 threads if detection fails
         Self {
-            listen_addr: "0.0.0.0:9000".to_string(),
+            addr: None,
+            port: None,
             handlers: Default::default(),
-            workers_number: thread_count,
-            deps_map: DepsMap::default(),
+            deps: Default::default(),
+            custom_num_workers: Some(thread_count),
         }
     }
 
-    pub fn with_addr(mut self, addr: &str) -> Self {
-        self.listen_addr = addr.to_string();
-        self
-    }
-
-    pub fn with_port(mut self, port: usize) -> Self {
-        if port > 65535 {
-            log::error!("Port cannot be larger than 65535. Was: {}. Using default port 9000.", port);
-            return self;
+    pub fn with_addr(self, addr: &str) -> Self {
+        Self {
+            addr: Some(addr.to_string()),
+            ..self
         }
-        let hostname = self.listen_addr.split(':').next().unwrap_or("0.0.0.0");
-        self.listen_addr = format!("{hostname}:{port}");
-        self
     }
 
-    pub fn with_handler(mut self, handler: AsyncHandler) -> Self {
-        self.handlers.insert(handler);
-        self
+    pub fn with_port(self, port: usize) -> Self {
+        Self {
+            port: Some(port),
+            ..self
+        }
     }
 
-    pub fn with_handlers(mut self, handlers: HashSet<AsyncHandler>) -> Self {
-        handlers.into_iter().for_each(|ele| {
-            self.handlers.insert(ele);
-        });
-        self
+    pub fn with_handler(self, handler: AsyncHandler) -> Self {
+        let mut handlers = self.handlers;
+        handlers.insert(handler);
+        Self { handlers, ..self }
     }
 
-    pub fn with_dep<T: Any + Send + Sync>(mut self, dep: T) -> Self {
-        self.deps_map.insert(dep);
-        self
+    pub fn with_handlers(self, new_handlers: HashSet<AsyncHandler>) -> Self {
+        let handlers = self.handlers.into_iter().chain(new_handlers).collect();
+        Self { handlers, ..self }
     }
 
-    pub fn with_deps(mut self, deps: Vec<Box<dyn Any + Sync + Send>>) -> Self {
-        deps.into_iter().for_each(|d| {
-            self.deps_map.insert_boxed(d);
-        });
-        self
+    pub fn with_dep<T: Any + Send + Sync>(self, dep: T) -> Self {
+        let mut deps = self.deps;
+        deps.push(Box::new(dep));
+        Self { deps, ..self }
     }
 
-    pub fn with_custom_num_workers(mut self, num_workers: usize) -> Self {
-        self.workers_number = num_workers;
-        self
+    pub fn with_deps(self, new_deps: Vec<Box<dyn Any + Sync + Send>>) -> Self {
+        let deps = self.deps.into_iter().chain(new_deps).collect();
+        Self { deps, ..self }
+    }
+
+    pub fn with_custom_num_workers(self, num_workers: usize) -> Self {
+        Self {
+            custom_num_workers: Some(num_workers),
+            ..self
+        }
     }
 
     pub fn build(self) -> AsyncHttpServer {
-        // Build the PathRouter from handlers
-        let mut router = PathRouter::new();
-        for handler in self.handlers {
-            let handler_arc = Arc::new(handler);
-            let path = handler_arc.path.clone();
-            router.add_route(&path, handler_arc);
-        }
-        
+        // Create path router functionally
+        let path_router = self.handlers.into_iter().fold(
+            PathRouter::new(),
+            |mut router, handler| {
+                let path = handler.path.clone();
+                router.add_route(&path, Arc::new(handler));
+                router
+            }
+        );
+
+        // Build deps map functionally
+        let deps_map = self.deps.into_iter().fold(
+            DepsMap::new(),
+            |mut map, dep| {
+                map.insert_boxed(dep);
+                map
+            }
+        );
+
+        let num_workers = self.custom_num_workers.unwrap_or(num_cpus::get());
+        let listen_addr = format!(
+            "{}:{}",
+            self.addr.unwrap_or_else(|| "127.0.0.1".to_string()),
+            self.port.unwrap_or(8080)
+        );
+
         AsyncHttpServer {
-            listen_addr: self.listen_addr,
-            path_router: Arc::new(router),
-            workers: Workers::new(self.workers_number),
-            connections: Default::default(),
-            started: AtomicBool::new(false),
-            shutdown_requested: AtomicBool::new(false),
-            deps_map: Arc::new(self.deps_map),
+            listen_addr,
+            workers: Workers::new(num_workers),
+            connections: Arc::new(DashMap::new()),
+            path_router: Arc::new(path_router),
+            deps_map: Arc::new(deps_map),
+            started: Arc::new(AtomicBool::new(false)),
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 }
